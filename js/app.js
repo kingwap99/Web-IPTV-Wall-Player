@@ -14,7 +14,8 @@ import {
   deleteChannel,
   isBlockedChannel,
   countryDisplayName,
-  flagForCountry
+  flagForCountry,
+  parseM3U
 } from './store.js'
 import { loadCatalog } from './catalog.js'
 
@@ -89,7 +90,7 @@ function createPlayer(channel, muted = true) {
   }
 
   const video = element('video', { playsinline: true, autoplay: true, loop: true, muted, preload: 'auto' })
-  const player = { key, channelID: channel.id, url: channel.url, video, hls: null }
+  const player = { key, channelID: channel.id, url: channel.url, video, hls: null, started: false }
 
   if (window.Hls?.isSupported()) {
     const hls = new window.Hls({
@@ -168,7 +169,8 @@ function updateControlVisibility() {
   state.pageControls?.classList.toggle('is-hidden', hidden)
 }
 
-function visiblePageSize() { return state.mode === '5x5' ? 16 : 12 }
+function modeCount() { return { '4x4': 4, '5x5': 5, '6x6': 6, '7x7': 7 }[state.mode] || 4 }
+function visiblePageSize() { return 4 * modeCount() - 4 }
 function pageCount() { return Math.max(1, Math.ceil(state.channels.length / visiblePageSize())) }
 function pageChannels() {
   const start = (state.page % pageCount()) * visiblePageSize()
@@ -188,7 +190,7 @@ function perimeterCells(count) {
 function centerGeometry(count, width, height) {
   const cellWidth = width / count
   const cellHeight = height / count
-  const span = count === 4 ? 2 : 3
+  const span = count - 2
   return {
     left: (width - cellWidth * span) / 2,
     top: (height - cellHeight * span) / 2,
@@ -222,7 +224,7 @@ function renderEmpty() {
       element('h1', { text: '建立你的第一面 IPTV Wall' }),
       element('p', { text: '一個畫面，同時看見世界。選擇一種方式加入你的頻道；OpenCast Grid 不內建或代管影音內容。' }),
       element('div', { className: 'empty-actions' },
-        element('button', { className: 'primary', onclick: openCatalog, text: '探索公開頻道' }),
+        element('button', { className: 'primary', onclick: () => openCatalog(), text: '探索公開頻道' }),
         element('button', { onclick: openImport, text: '匯入 M3U 網址' })
       )
     )
@@ -247,11 +249,14 @@ function renderToolbar() {
       }))
     ),
     element('div', { className: 'toolbar-group' },
-      element('button', { className: state.mode === '4x4' ? 'active' : '', onclick: () => selectMode('4x4'), text: '4×4' }),
-      element('button', { className: state.mode === '5x5' ? 'active' : '', onclick: () => selectMode('5x5'), text: '5×5' }),
+      ...['4x4', '5x5', '6x6', '7x7'].map(mode => element('button', {
+        className: state.mode === mode ? 'active' : '',
+        onclick: () => selectMode(mode),
+        text: mode.replace('x', '×')
+      })),
       element('button', { onclick: toggleFullscreen, text: '⛶' })
     ),
-    element('button', { onclick: openCatalog, text: '頻道探索' }),
+    element('button', { onclick: () => openCatalog(), text: '頻道探索' }),
     element('button', { onclick: openImport, text: '匯入 M3U' }),
     element('button', { onclick: openPlaylistManager, text: '頻道庫' })
   )
@@ -276,10 +281,13 @@ function createMiniChannel(channel, cell, width, height) {
     const player = createPlayer(channel, true)
     player.video.className = ''
     player.video.style.cssText = ''
-    player.video.addEventListener('playing', () => {
+    const markPlaying = () => {
+      player.started = true
       player.video.classList.add('is-playing')
       placeholder.style.display = 'none'
-    }, { once: true })
+    }
+    if (player.started || player.video.readyState >= 2) markPlaying()
+    else player.video.addEventListener('playing', markPlaying, { once: true })
     mini.insertBefore(player.video, placeholder)
     if (state.paused) player.video.pause()
     else player.video.play().catch(() => {})
@@ -379,7 +387,7 @@ function layoutWall() {
   state.surface.innerHTML = ''
   const width = state.surface.clientWidth
   const height = state.surface.clientHeight
-  const count = state.mode === '5x5' ? 5 : 4
+  const count = modeCount()
   const cellWidth = width / count
   const cellHeight = height / count
   const page = pageChannels()
@@ -398,10 +406,14 @@ function layoutWall() {
   const geometry = centerGeometry(count, width, height)
   state.hero = createHero(featured, geometry)
   state.surface.append(state.hero)
+  renderPageControls()
+  renderReorderToolbar()
   updateControlVisibility()
 }
 
 function renderPageControls() {
+  state.pageControls?.remove()
+  state.pageControls = null
   if (!state.surface || pageCount() <= 1 || state.fullscreen) return
   state.pageControls = element('div', { className: 'page-controls' },
     element('button', { disabled: state.page <= 0, onclick: () => changePage(-1), text: '‹' }),
@@ -412,8 +424,10 @@ function renderPageControls() {
 }
 
 function renderReorderToolbar() {
+  state.reorderToolbar?.remove()
+  state.reorderToolbar = null
   if (!state.reorderActive || !state.surface || state.fullscreen) return
-  const count = state.mode === '5x5' ? 5 : 4
+  const count = modeCount()
   const page = pageChannels()
   const cells = perimeterCells(count)
   const index = page.findIndex(channel => channel.id === state.reorderSelectedID)
@@ -426,6 +440,7 @@ function renderReorderToolbar() {
     element('button', { onclick: finishReorder, text: '完成' }),
     element('button', { onclick: cancelReorder, text: '取消' })
   )
+  state.reorderToolbar = toolbar
   state.surface.append(toolbar)
 }
 
@@ -448,8 +463,6 @@ async function render() {
   state.resizeObserver.observe(state.surface)
   requestAnimationFrame(() => {
     layoutWall()
-    renderPageControls()
-    renderReorderToolbar()
     showControls()
   })
 }
@@ -494,8 +507,6 @@ function changePage(delta) {
   state.page = Math.max(0, Math.min(pageCount() - 1, state.page + delta))
   localStorage.setItem('oc-page', state.page)
   layoutWall()
-  renderPageControls()
-  renderReorderToolbar()
 }
 
 function toggleFullscreen() {
@@ -527,8 +538,6 @@ function toggleAllPlayback() {
     else player.video.play().catch(() => {})
   }
   layoutWall()
-  renderPageControls()
-  renderReorderToolbar()
 }
 
 function requestDelete(channel) {
@@ -545,18 +554,16 @@ function beginReorder(channel) {
     : [...state.baseChannels.map(item => item.id)]
   showControls()
   layoutWall()
-  renderPageControls()
-  renderReorderToolbar()
 }
 
 async function handleReorderClick(channel) {
   if (!state.reorderSelectedID) {
     state.reorderSelectedID = channel.id
-    layoutWall(); renderReorderToolbar(); return
+    layoutWall(); return
   }
   if (state.reorderSelectedID === channel.id) {
     state.reorderSelectedID = null
-    layoutWall(); renderReorderToolbar(); return
+    layoutWall(); return
   }
 
   const ids = [...state.baseChannels.map(item => item.id)]
@@ -569,7 +576,7 @@ async function handleReorderClick(channel) {
   }
   state.reorderSelectedID = channel.id
   await loadState()
-  layoutWall(); renderPageControls(); renderReorderToolbar()
+  layoutWall()
 }
 
 async function finishReorder() {
@@ -577,7 +584,7 @@ async function finishReorder() {
   state.reorderSelectedID = null
   state.reorderSnapshot = []
   await loadState()
-  layoutWall(); renderPageControls()
+  layoutWall()
 }
 
 async function cancelReorder() {
@@ -589,7 +596,7 @@ async function cancelReorder() {
   state.reorderSelectedID = null
   state.reorderSnapshot = []
   await loadState()
-  layoutWall(); renderPageControls()
+  layoutWall()
 }
 
 function closeContextMenu() {
@@ -646,8 +653,9 @@ function showHeroMenu(x, y, channel) {
     }
     addMenuItem(menu, `${state.category === 'all' ? '✓' : '□'} 全部頻道`, () => selectCategory('all'))
     addMenuItem(menu, `${state.category === 'favorites' ? '✓' : '□'} 我的最愛`, () => selectCategory('favorites'))
-    addMenuItem(menu, `${state.mode === '4x4' ? '✓' : '□'} 4×4`, () => selectMode('4x4'))
-    addMenuItem(menu, `${state.mode === '5x5' ? '✓' : '□'} 5×5`, () => selectMode('5x5'))
+    for (const mode of ['4x4', '5x5', '6x6', '7x7']) {
+      addMenuItem(menu, `${state.mode === mode ? '✓' : '□'} ${mode.replace('x', '×')}`, () => selectMode(mode))
+    }
     addSeparator(menu)
     addMenuItem(menu, '▣ 頻道庫與來源', openPlaylistManager)
     addSeparator(menu)
@@ -693,60 +701,165 @@ function openVolumePanel() {
   openModal(element('div', {}, element('h2', { text: '正常播放音量' }), value, label, element('div', { className: 'modal-actions' }, element('button', { onclick: closeModal, text: '完成' }))))
 }
 
-async function openCatalog() {
-  const search = element('input', { type: 'search', placeholder: '搜尋頻道名稱' })
+async function openCatalog(force = false) {
+  const selectedIDs = new Set()
+  const search = element('input', { type: 'search', placeholder: '搜尋頻道名稱，例如 BBC、NHK' })
   const country = element('select')
-  country.append(element('option', { value: '', text: '所有國家' }))
+  const language = element('select')
+  const category = element('select')
+  const quality = element('select')
+  const message = element('div', { className: 'modal-message' })
+  const addButton = element('button', { className: 'primary', disabled: true, text: '加入 0 個頻道' })
+  const refreshButton = element('button', { text: '重新整理' })
   const list = element('div', { className: 'catalog-list' }, element('div', { className: 'loading' }, element('div', { className: 'spinner' }), '正在載入 iptv-org 頻道…'))
-  openModal(element('div', {}, element('h2', { text: '探索公開頻道' }), element('div', { className: 'catalog-filters' }, search, country), list))
+  const filters = element('div', { className: 'catalog-filters' },
+    element('label', { className: 'catalog-filter' }, element('span', { text: '國家' }), country),
+    element('label', { className: 'catalog-filter' }, element('span', { text: '語言' }), language),
+    element('label', { className: 'catalog-filter' }, element('span', { text: '主題' }), category),
+    element('label', { className: 'catalog-filter' }, element('span', { text: '解析度' }), quality)
+  )
+  openModal(element('div', {},
+    element('h2', { text: '探索 iptv-org 頻道' }),
+    element('p', { className: 'modal-note', text: '依國家、語言、主題或名稱篩選；選取後加入頻道庫。' }),
+    element('p', { className: 'modal-note subtle', text: 'iptv-org 是獨立的第三方社群頻道索引。OpenCast Grid 不代管、下載或儲存影音內容。' }),
+    element('div', { className: 'catalog-search' }, search),
+    filters,
+    list,
+    message,
+    element('div', { className: 'modal-actions' }, refreshButton, element('button', { onclick: closeModal, text: '關閉' }), addButton)
+  ))
+  for (const value of ['1080', '720', '576', '480', '270', '0']) {
+    quality.append(element('option', { value, text: value === '0' ? '所有解析度' : `${value}p 以上` }))
+  }
 
-  let channels
-  try { channels = await loadCatalog() }
-  catch (error) { list.innerHTML = ''; list.append(element('div', { className: 'loading', text: `載入失敗：${error.message}` })); return }
-  for (const code of [...new Set(channels.map(channel => channel.country))].sort()) country.append(element('option', { value: code, text: `${flagForCountry(code)} ${code}` }))
+  let channels = []
+  const addedIDs = new Set()
+
+  const load = async (reload = false) => {
+    list.innerHTML = ''
+    list.append(element('div', { className: 'loading' }, element('div', { className: 'spinner' }), '正在載入 iptv-org 頻道…'))
+    message.textContent = ''
+    try { channels = await loadCatalog(reload) }
+    catch (error) { list.innerHTML = ''; list.append(element('div', { className: 'loading', text: `載入失敗：${error.message}` })); return }
+    addedIDs.clear()
+    const playlist = (await getPlaylists()).find(item => item.id === 'catalog-import')
+    for (const match of (playlist?.content || '').matchAll(/tvg-id="([^"]+)"/g)) addedIDs.add(match[1])
+    const countries = [...new Set(channels.map(channel => channel.country))].sort()
+    country.innerHTML = ''
+    country.append(element('option', { value: 'ALL', text: '所有國家' }))
+    for (const code of countries) country.append(element('option', { value: code, text: `${flagForCountry(code)} ${countryDisplayName(code)}` }))
+    const categories = [...new Set(channels.flatMap(channel => channel.categories || []))].sort()
+    category.innerHTML = ''
+    category.append(element('option', { value: 'ALL', text: '所有主題' }))
+    for (const id of categories) category.append(element('option', { value: id, text: `${categoryLabel(id)} · ${channels.filter(channel => (channel.categories || []).includes(id)).length}` }))
+    const languages = [...new Set(channels.flatMap(channel => channel.languages || []))].sort()
+    language.innerHTML = ''
+    language.append(element('option', { value: 'ALL', text: '所有語言' }))
+    for (const code of languages) language.append(element('option', { value: code, text: `${languageLabel(code)} · ${channels.filter(channel => (channel.languages || []).includes(code)).length}` }))
+    for (const channel of channels) addedIDs.has(channel.id) && selectedIDs.delete(channel.id)
+    renderList()
+  }
+
+  const updateAddButton = () => {
+    addButton.textContent = `加入 ${selectedIDs.size} 個頻道`
+    addButton.disabled = selectedIDs.size === 0
+  }
 
   const renderList = () => {
-    const query = search.value.toLowerCase()
-    const visible = channels.filter(channel => (!query || channel.name.toLowerCase().includes(query)) && (!country.value || channel.country === country.value)).slice(0, 200)
+    const query = search.value.trim().toLowerCase()
+    const minimum = Number(quality.value) || 0
+    const matched = channels.filter(channel => {
+      const matchesSearch = !query || channel.name.toLowerCase().includes(query) || channel.id.toLowerCase().includes(query)
+      const matchesCountry = country.value === 'ALL' || !country.value || channel.country === country.value
+      const matchesLanguage = language.value === 'ALL' || !language.value || (channel.languages || []).includes(language.value)
+      const matchesCategory = category.value === 'ALL' || !category.value || (channel.categories || []).includes(category.value)
+      const matchesQuality = minimum <= 0 || qualityScore(channel) >= minimum
+      return matchesSearch && matchesCountry && matchesLanguage && matchesCategory && matchesQuality
+    })
+    const visible = matched.slice(0, 250)
     list.innerHTML = ''
-    if (!visible.length) { list.append(element('div', { className: 'loading', text: '沒有符合的頻道' })); return }
+    message.textContent = `找到 ${matched.length} 台可直接播放的 HLS 頻道${matched.length > 250 ? '，以下顯示前 250 台' : ''}`
+    if (!visible.length) { list.append(element('div', { className: 'loading', text: '沒有符合的頻道' })); updateAddButton(); return }
     for (const channel of visible) {
-      const row = element('div', { className: 'catalog-row' },
+      const added = addedIDs.has(channel.id)
+      const selected = selectedIDs.has(channel.id)
+      const state = element('div', {
+        className: `catalog-state${added ? ' is-added' : selected ? ' is-selected' : ''}`,
+        text: added ? '✓ 已加入' : selected ? '✓ 已選取' : '+'
+      })
+      const row = element('div', { className: `catalog-row${added ? ' is-added' : ''}` },
         element('div', { className: 'catalog-flag', text: flagForCountry(channel.country) }),
         element('div', { className: 'catalog-details' },
           element('div', { className: 'catalog-name', text: channel.name }),
-          element('div', { className: 'catalog-meta', text: `${channel.country} · ${(channel.categories || []).slice(0, 2).join(' · ')} ${channel.quality || ''}` })
+          element('div', { className: 'catalog-meta', text: `${countryDisplayName(channel.country)} · ${(channel.categories || []).map(categoryLabel).slice(0, 2).join(' · ')} ${channel.quality || ''}` })
         ),
-        element('button', { className: 'catalog-add', text: '+' })
+        state
       )
-      row.addEventListener('click', () => addCatalogChannel(channel))
-      row.querySelector('.catalog-add').addEventListener('click', event => { event.stopPropagation(); addCatalogChannel(channel) })
+      if (!added) row.addEventListener('click', () => {
+        if (selectedIDs.has(channel.id)) selectedIDs.delete(channel.id)
+        else selectedIDs.add(channel.id)
+        renderList()
+      })
       list.append(row)
     }
+    updateAddButton()
   }
+
   search.addEventListener('input', renderList)
   country.addEventListener('change', renderList)
-  renderList()
+  language.addEventListener('change', renderList)
+  category.addEventListener('change', renderList)
+  quality.addEventListener('change', renderList)
+  refreshButton.addEventListener('click', () => load(true))
+  addButton.addEventListener('click', async () => {
+    const chosen = channels.filter(channel => selectedIDs.has(channel.id) && !addedIDs.has(channel.id))
+    if (!chosen.length) return
+    addButton.disabled = true
+    const count = await addCatalogChannels(chosen)
+    toast(count ? `已加入 ${count} 個頻道` : '這些頻道已在播放牆中')
+    closeModal()
+    await render()
+  })
+
+  await load(force)
 }
 
-async function addCatalogChannel(channel) {
-  if (isBlockedChannel(channel)) {
-    toast('此頻道已從播放牆排除')
-    return
-  }
-  const entry = `#EXTINF:-1 tvg-id="${channel.id}" tvg-country="${channel.country}" group-title="IPTV.org",${channel.name}\n${channel.streamURL}`
+function qualityScore(channel) { return parseInt(String(channel.quality || '0').replace(/\D/g, '')) || 0 }
+
+let languageNames
+function languageLabel(code) {
+  if (!code) return ''
+  try {
+    languageNames = languageNames || new Intl.DisplayNames(['zh-Hant'], { type: 'language' })
+    return languageNames.of(code) || code
+  } catch { return code }
+}
+
+function categoryLabel(id) {
+  return ({ news: '新聞', business: '財經', sports: '體育', general: '綜合', entertainment: '娛樂', movies: '電影', music: '音樂',
+    kids: '兒童', education: '教育', documentary: '紀錄片', culture: '文化', religious: '宗教', government: '政府',
+    weather: '氣象', family: '家庭', lifestyle: '生活', science: '科學', shop: '購物', travel: '旅遊', comedy: '喜劇',
+    series: '影集', auto: '汽車', cooking: '烹飪', fitness: '健身', outdoors: '戶外', relax: '放鬆', classic: '經典',
+    animation: '動畫', legend: '傳奇', top: '排行' })[id] || id
+}
+
+async function addCatalogChannels(channels) {
   const playlists = await getPlaylists()
-  const existing = playlists.find(playlist => playlist.id === 'catalog-import')
-  if (existing) {
-    existing.content += `\n${entry}`
-    existing.channelCount += 1
-    existing.importedAt = new Date().toISOString()
-    await savePlaylist(existing)
-  } else {
-    await savePlaylist({ id: 'catalog-import', name: 'IPTV.org 頻道', sourceURL: 'catalog://local', content: entry, channelCount: 1, importedAt: new Date().toISOString() })
+  const playlist = playlists.find(item => item.id === 'catalog-import') ||
+    { id: 'catalog-import', name: 'IPTV.org 頻道', sourceURL: 'catalog://local', content: '', channelCount: 0, importedAt: new Date().toISOString() }
+  let added = 0
+  for (const channel of channels) {
+    if (isBlockedChannel(channel)) continue
+    if (playlist.content.includes(`tvg-id="${channel.id}"`)) continue
+    const entry = `#EXTINF:-1 tvg-id="${channel.id}" tvg-country="${channel.country}" group-title="IPTV.org",${channel.name}\n${channel.streamURL}`
+    playlist.content = playlist.content ? `${playlist.content}\n${entry}` : entry
+    added += 1
   }
-  toast(`已加入「${channel.name}」`)
-  await render()
+  if (!added) return 0
+  playlist.channelCount = parseM3U(playlist.content, playlist.id).length
+  playlist.importedAt = new Date().toISOString()
+  await savePlaylist(playlist)
+  return added
 }
 
 function openImport() {

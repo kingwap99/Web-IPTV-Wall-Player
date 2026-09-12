@@ -212,9 +212,10 @@ export async function getFilteredChannels(category = 'all') {
   const [all, deleted, favorites, favoriteOrder, channelOrder] = await Promise.all([
     getAllChannels(), getDeleted(), getFavorites(), getFavoriteOrder(), getChannelOrder()
   ])
+  const favoriteSet = new Set(favorites)
   const available = all.filter(channel => !deleted.has(channel.id))
   const pool = category === 'favorites'
-    ? available.filter(channel => favorites.has(channel.id))
+    ? available.filter(channel => favoriteSet.has(channel.id))
     : available
   const explicit = category === 'favorites' ? favoriteOrder : channelOrder
 
@@ -235,7 +236,7 @@ export async function getFilteredChannels(category = 'all') {
       seen.add(channel.id)
     }
   }
-  return { channels, favorites: new Set(favorites) }
+  return { channels, favorites: favoriteSet }
 }
 
 export async function reorderChannels(firstID, secondID) {
