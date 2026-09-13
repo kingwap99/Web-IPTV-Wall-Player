@@ -138,6 +138,56 @@ function normalizeSharedDoc(doc) {
   return out
 }
 
+function unionValues(...lists) {
+  return [...new Set(lists.flat().filter(value => value !== null && value !== undefined))]
+}
+
+// 合併 server 與本機的共用資料。目的：
+// 1. 避免「本機較新或較多清單」的使用者一接上 server 就被舊資料整包覆寫；
+// 2. 不同 client 可能用不同 playlist id 存同一份來源，成員 id 必須對齊合併後實際存在的清單。
+function mergeSharedDocs(server, local) {
+  const serverLists = server?.playlists || []
+  const localLists = local?.playlists || []
+  const bySource = new Map()
+  for (const playlist of [...serverLists, ...localLists]) {
+    if (!playlist || !playlist.sourceURL) continue
+    const existing = bySource.get(playlist.sourceURL)
+    if (!existing) { bySource.set(playlist.sourceURL, playlist); continue }
+    const newer = (playlist.importedAt || '') > (existing.importedAt || '')
+    const moreChannels = (playlist.channelCount || 0) > (existing.channelCount || 0)
+    if (newer || (!newer && moreChannels)) bySource.set(playlist.sourceURL, playlist)
+  }
+  // 沒有來源網址的（不可能，但以防萬一）直接保留本地端或 server 的
+  const playlists = [...bySource.values()]
+  const playlistIDs = new Set(playlists.map(p => p.id))
+  const keepMember = id => {
+    if (!String(id).startsWith('m3u:')) return true
+    return [...playlistIDs].some(pid => String(id).startsWith('m3u:' + pid + ':'))
+  }
+
+  const groupMap = new Map()
+  for (const group of [...(server?.meta?.favoriteGroups || []), ...(local?.meta?.favoriteGroups || [])]) {
+    if (group && group.id && !groupMap.has(group.id)) groupMap.set(group.id, group)
+  }
+  const favoriteGroups = [...groupMap.values()]
+
+  const meta = {
+    favoriteGroups,
+    deleted: unionValues(server?.meta?.deleted, local?.meta?.deleted).filter(keepMember),
+    channelOrder: unionValues(server?.meta?.channelOrder, local?.meta?.channelOrder).filter(keepMember),
+    favorites: unionValues(server?.meta?.favorites, local?.meta?.favorites).filter(keepMember),
+    favoriteOrder: unionValues(server?.meta?.favoriteOrder, local?.meta?.favoriteOrder).filter(keepMember),
+    activeFavoriteGroup: server?.meta?.activeFavoriteGroup || local?.meta?.activeFavoriteGroup || favoriteGroups[0]?.id || DEFAULT_FAVORITE_GROUP_ID
+  }
+  for (const group of favoriteGroups) {
+    meta['favoriteGroup:' + group.id] = unionValues(
+      server?.meta?.['favoriteGroup:' + group.id],
+      local?.meta?.['favoriteGroup:' + group.id]
+    ).filter(keepMember)
+  }
+  return { playlists, meta }
+}
+
 async function readLocalShared() {
   const playlists = await idbGetAll('playlists').catch(() => [])
   const meta = {}
@@ -194,8 +244,16 @@ export async function initSharedStore() {
   storeState.serverDoc = { playlists: [], meta: {} }
 
   if (!serverBlank) {
-    storeState.serverDoc = normalizeSharedDoc(serverDoc)
-    await mirrorSharedToIdb()
+    const local = await readLocalShared()
+    if (local.playlists.length || Object.keys(local.meta).length) {
+      // 兩邊都有資料：合併，避免本機較新的資料被 server 整包覆寫，並把結果寫回 server。
+      storeState.serverDoc = mergeSharedDocs(normalizeSharedDoc(serverDoc), local)
+      await mirrorSharedToIdb()
+      await scheduleServerSync()
+    } else {
+      storeState.serverDoc = normalizeSharedDoc(serverDoc)
+      await mirrorSharedToIdb()
+    }
     return
   }
 
@@ -214,17 +272,6 @@ function readJSON(value, fallback) {
 
 function makeID() {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-// 台灣電視公司（台視）主頻道：不加入播放牆，也不出現在探索目錄。
-export function isBlockedChannel(channel) {
-  if (!channel) return false
-  const id = String(channel.id || '')
-  const name = String(channel.name || '').trim()
-  const country = String(channel.country || '').toUpperCase()
-  if (id === 'TTV.tw' || id.endsWith(':TTV.tw')) return true
-  if (country === 'TW' && name.toLowerCase() === 'ttv') return true
-  return name.includes('台視') || name.includes('台视')
 }
 
 export async function initDB() {
@@ -332,7 +379,6 @@ export async function getAllChannels() {
     .sort((left, right) => String(left.importedAt || '').localeCompare(String(right.importedAt || '')))
   const seen = new Set()
   return playlists.flatMap(playlist => parseM3U(playlist.content, playlist.id))
-    .filter(channel => !isBlockedChannel(channel))
     .filter(channel => seen.has(channel.id) ? false : (seen.add(channel.id), true))
 }
 

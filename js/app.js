@@ -9,7 +9,6 @@ import {
   removePlaylist,
   importM3U,
   deleteChannel,
-  isBlockedChannel,
   countryDisplayName,
   flagForCountry,
   parseM3U,
@@ -960,7 +959,6 @@ async function addCatalogChannels(channels) {
     { id: 'catalog-import', name: 'IPTV.org 頻道', sourceURL: 'catalog://local', content: '', channelCount: 0, importedAt: new Date().toISOString() }
   let added = 0
   for (const channel of channels) {
-    if (isBlockedChannel(channel)) continue
     if (playlist.content.includes(`tvg-id="${channel.id}"`)) continue
     const entry = `#EXTINF:-1 tvg-id="${channel.id}" tvg-country="${channel.country}" group-title="IPTV.org",${channel.name}\n${channel.streamURL}`
     playlist.content = playlist.content ? `${playlist.content}\n${entry}` : entry
