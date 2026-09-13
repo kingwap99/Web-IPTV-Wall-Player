@@ -45,7 +45,7 @@ function idbRemove(store, key) { return request(store, 'readwrite', objectStore 
 // 相關的鍵。catalog（iptv-org 探索快取）與 catalog-meta 保持本機，UI 偏好另存 localStorage。
 const SHARED_META_KEYS = new Set([
   'deleted', 'channelOrder', 'favoriteGroups', 'activeFavoriteGroup',
-  'favorites', 'favoriteOrder'
+  'favorites', 'favoriteOrder', 'wallModes'
 ])
 const isSharedMetaKey = key => SHARED_META_KEYS.has(key) || String(key).startsWith('favoriteGroup:')
 
@@ -177,6 +177,7 @@ function mergeSharedDocs(server, local) {
     channelOrder: unionValues(server?.meta?.channelOrder, local?.meta?.channelOrder).filter(keepMember),
     favorites: unionValues(server?.meta?.favorites, local?.meta?.favorites).filter(keepMember),
     favoriteOrder: unionValues(server?.meta?.favoriteOrder, local?.meta?.favoriteOrder).filter(keepMember),
+    wallModes: { ...(local?.meta?.wallModes || {}), ...(server?.meta?.wallModes || {}) },
     activeFavoriteGroup: server?.meta?.activeFavoriteGroup || local?.meta?.activeFavoriteGroup || favoriteGroups[0]?.id || DEFAULT_FAVORITE_GROUP_ID
   }
   for (const group of favoriteGroups) {
@@ -423,6 +424,20 @@ export async function getActiveFavoriteGroupID() {
 }
 
 export async function setActiveFavoriteGroupID(groupID) { return setMeta('activeFavoriteGroup', groupID) }
+
+// 每份播放清單／最愛清單各自記住的版面（4x4 / 5x5 / 6x6 / 7x7）。
+// 以分類值為鍵：'all' 代表全部頻道，'fav:<id>' 代表一份最愛清單。
+export async function getWallModes() {
+  const stored = await getMeta('wallModes', null)
+  return stored && typeof stored === 'object' ? stored : {}
+}
+
+export async function setWallMode(category, mode) {
+  const modes = { ...(await getWallModes()) }
+  modes[category] = mode
+  await setMeta('wallModes', modes)
+  return modes
+}
 
 export async function getFavoriteGroupIDs(groupID) {
   const id = groupID || DEFAULT_FAVORITE_GROUP_ID

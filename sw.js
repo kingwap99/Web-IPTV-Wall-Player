@@ -1,4 +1,4 @@
-const CACHE = 'opencast-v11';
+const CACHE = 'opencast-v12';
 const ASSETS = [
   '/',
   '/index.html',
