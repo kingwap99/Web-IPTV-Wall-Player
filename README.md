@@ -1,6 +1,7 @@
-# OpenCast Grid
+# Web IPTV Wall player
 
-Web 版多頻道 IPTV Wall 播放器，互動規格以 IPTV Wall Player macOS 版為準。
+多頻道 IPTV Wall 的 Web 版播放器，對應 macOS 版 [IPTV-Wall-Player](https://github.com/kingwap99/IPTV-Wall-Player)。
+互動規格與視覺設計（圖示、色系）沿用 macOS 版。
 
 ## 目前功能
 
@@ -26,7 +27,7 @@ Web 版多頻道 IPTV Wall 播放器，互動規格以 IPTV Wall Player macOS �
 ## 本地執行
 
 ```bash
-cd opencast-grid
+cd web-iptv-wall-player
 python3 server.py
 ```
 
@@ -41,4 +42,4 @@ python3 server.py
 
 ## 內容來源
 
-OpenCast Grid 不代管或轉播影音內容。串流來源來自使用者匯入的 M3U，或 iptv-org 提供的公開索引資料；使用者應自行確認來源的使用權限。
+本播放器不代管或轉播影音內容。串流來源來自使用者匯入的 M3U，或 iptv-org 提供的公開索引資料；使用者應自行確認來源的使用權限。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenCast Grid 共用資料伺服器（純 Python 標準程式庫，無第三方依賴）
+"""Web IPTV Wall player 共用資料伺服器（純 Python 標準程式庫，無第三方依賴）
 
 職責：
   1. 提供站台靜態檔案（index.html、js、css、圖示、Service Worker…）
@@ -78,7 +78,7 @@ def save_doc(doc):
             raise
 
 
-class OpenCastGridHandler(SimpleHTTPRequestHandler):
+class WebIPTVWallHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=ROOT, **kwargs)
 
@@ -115,21 +115,21 @@ class OpenCastGridHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("[opencast-grid] %s\n" % (fmt % args))
+        sys.stderr.write("[web-iptv-wall] %s\n" % (fmt % args))
         sys.stderr.flush()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="OpenCast Grid 共用資料伺服器")
+    parser = argparse.ArgumentParser(description="Web IPTV Wall player 共用資料伺服器")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
 
-    print("OpenCast Grid — 共用資料伺服器")
+    print("Web IPTV Wall player — 共用資料伺服器")
     print("資料檔案： %s" % DATA_FILE)
     print("網址：     http://%s:%s/" % (args.host, args.port))
     try:
-        ThreadingHTTPServer((args.host, args.port), OpenCastGridHandler).serve_forever()
+        ThreadingHTTPServer((args.host, args.port), WebIPTVWallHandler).serve_forever()
     except KeyboardInterrupt:
         print("\n已停止。")
 

@@ -1,4 +1,4 @@
-const CACHE = 'opencast-v12';
+const CACHE = 'web-iptv-wall-v1';
 const ASSETS = [
   '/',
   '/index.html',

@@ -1,7 +1,7 @@
 {
-  "name": "OpenCast Grid",
-  "short_name": "OpenCast",
-  "description": "全球多頻道直播牆，同時觀看多個新聞直播頻道",
+  "name": "Web IPTV Wall player",
+  "short_name": "Web IPTV Wall",
+  "description": "Web IPTV Wall player — 全球多頻道直播牆，同時觀看多個新聞直播頻道",
   "start_url": "/",
   "display": "standalone",
   "orientation": "any",

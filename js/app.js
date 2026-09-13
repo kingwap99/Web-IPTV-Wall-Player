@@ -259,7 +259,7 @@ function renderEmpty() {
         )
       ),
       element('h1', { text: '建立你的第一面 IPTV Wall' }),
-      element('p', { text: '一個畫面，同時看見世界。選擇一種方式加入你的頻道；OpenCast Grid 不內建或代管影音內容。' }),
+      element('p', { text: '一個畫面，同時看見世界。選擇一種方式加入你的頻道；Web IPTV Wall player 不內建或代管影音內容。' }),
       element('div', { className: 'empty-actions' },
         element('button', { className: 'primary', onclick: () => openCatalog(), text: '探索公開頻道' }),
         element('button', { onclick: openImport, text: '匯入 M3U 網址' })
@@ -842,7 +842,7 @@ async function openCatalog(force = false) {
   openModal(element('div', {},
     element('h2', { text: '探索 iptv-org 頻道' }),
     element('p', { className: 'modal-note', text: '依國家、語言、主題或名稱篩選；選取後加入頻道庫。' }),
-    element('p', { className: 'modal-note subtle', text: 'iptv-org 是獨立的第三方社群頻道索引。OpenCast Grid 不代管、下載或儲存影音內容。' }),
+    element('p', { className: 'modal-note subtle', text: 'iptv-org 是獨立的第三方社群頻道索引。Web IPTV Wall player 不代管、下載或儲存影音內容。' }),
     element('div', { className: 'catalog-search' }, search),
     filters,
     list,
@@ -1199,6 +1199,6 @@ async function main() {
 }
 
 main().catch(error => {
-  app.textContent = `OpenCast Grid 啟動失敗：${error.message}`
+  app.textContent = `Web IPTV Wall player 啟動失敗：${error.message}`
   console.error(error)
 })
