@@ -22,7 +22,9 @@ import {
   createFavoriteGroup,
   renameFavoriteGroup,
   deleteFavoriteGroup,
-  favoriteGroupID
+  favoriteGroupID,
+  getWallModes,
+  setWallMode
 } from './store.js'
 import { loadCatalog } from './catalog.js'
 
@@ -50,7 +52,8 @@ const state = {
   category: localStorage.getItem('oc-category') || 'all',
   country: 'ALL',
   mode: localStorage.getItem('oc-mode') || '4x4',
-  page: Number(localStorage.getItem('oc-page') || 0),
+  modes: {},
+ page: Number(localStorage.getItem('oc-page') || 0),
   featuredID: localStorage.getItem('oc-featured') || null,
   fullscreen: false,
   modeBeforeFullscreen: localStorage.getItem('oc-mode-before-fullscreen') || '4x4',
@@ -575,6 +578,11 @@ function selectCategory(category) {
   state.country = 'ALL'
   state.page = 0
   localStorage.setItem('oc-category', category)
+  const savedMode = state.modes[category]
+  if (savedMode && savedMode !== state.mode) {
+    state.mode = savedMode
+    localStorage.setItem('oc-mode', savedMode)
+  }
   const groupID = favoriteGroupID(category)
   if (groupID) {
     state.activeGroupID = groupID
@@ -587,6 +595,9 @@ function selectMode(mode) {
   state.mode = mode
   state.page = Math.min(state.page, pageCount() - 1)
   localStorage.setItem('oc-mode', mode)
+  // 版面跟著目前所在的清單存，切換清單時各自還原。
+  state.modes[state.category] = mode
+  setWallMode(state.category, mode)
   render()
 }
 
@@ -1179,6 +1190,10 @@ async function main() {
   const browsing = favoriteGroupID(state.category)
   if (browsing && !groups.some(group => group.id === browsing)) state.category = 'all'
   localStorage.setItem('oc-category', state.category)
+  // 每份播放清單／最愛清單各自記住版面：切換清單時套用各自存好的 mode。
+  state.modes = await getWallModes()
+  if (!state.modes['all']) state.modes['all'] = localStorage.getItem('oc-mode') || '4x4'
+  state.mode = state.modes[state.category] || '4x4'
   installGlobalActivityHandlers()
   await render()
 }
