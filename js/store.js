@@ -176,48 +176,148 @@ async function getMeta(key, fallback) {
 
 async function setMeta(key, value) { return put('meta', { key, value }) }
 
-export async function getFavorites() { return getMeta('favorites', []) }
-export async function getFavoriteOrder() { return getMeta('favoriteOrder', []) }
+export const DEFAULT_FAVORITE_GROUP_ID = 'default'
+export const FAVORITE_CATEGORY_PREFIX = 'fav:'
+
+// 分類值以 "fav:<groupID>" 表示一份最愛清單；"all" 代表全部頻道。
+export function favoriteCategory(groupID) { return `${FAVORITE_CATEGORY_PREFIX}${groupID}` }
+export function isFavoriteCategory(category) { return String(category || '').startsWith(FAVORITE_CATEGORY_PREFIX) }
+export function favoriteGroupID(category) {
+  return isFavoriteCategory(category) ? String(category).slice(FAVORITE_CATEGORY_PREFIX.length) : null
+}
+
 export async function getDeleted() { return new Set(await getMeta('deleted', [])) }
 export async function getChannelOrder() { return getMeta('channelOrder', []) }
-export async function saveFavoriteOrder(order) { return setMeta('favoriteOrder', order) }
-export async function isFavorite(channelID) { return (await getFavorites()).includes(channelID) }
 
-export async function toggleFavorite(channelID) {
-  let favorites = await getFavorites()
-  let order = await getFavoriteOrder()
-  if (favorites.includes(channelID)) {
-    favorites = favorites.filter(id => id !== channelID)
-    order = order.filter(id => id !== channelID)
-  } else {
-    favorites = [...favorites.filter(id => id !== channelID), channelID]
-    order = [...order.filter(id => id !== channelID), channelID]
+// 多份可自訂名稱的最愛清單：清單本身存於 meta.favoriteGroups，
+// 每份清單的頻道與順序存於 meta["favoriteGroup:<id>"]。
+export async function getFavoriteGroups() {
+  const stored = await getMeta('favoriteGroups', null)
+  if (Array.isArray(stored) && stored.length) {
+    return stored
+      .filter(group => group && group.id)
+      .map(group => ({ id: String(group.id), name: String(group.name || '').trim() || '未命名最愛' }))
   }
-  await setMeta('favorites', favorites)
-  await setMeta('favoriteOrder', order)
-  return favorites
+  const groups = [{ id: DEFAULT_FAVORITE_GROUP_ID, name: '我的最愛' }]
+  await setMeta('favoriteGroups', groups)
+  return groups
 }
+
+export async function getActiveFavoriteGroupID() {
+  const groups = await getFavoriteGroups()
+  const active = await getMeta('activeFavoriteGroup', null)
+  return groups.some(group => group.id === active) ? active : groups[0].id
+}
+
+export async function setActiveFavoriteGroupID(groupID) { return setMeta('activeFavoriteGroup', groupID) }
+
+export async function getFavoriteGroupIDs(groupID) {
+  const id = groupID || DEFAULT_FAVORITE_GROUP_ID
+  const stored = await getMeta(`favoriteGroup:${id}`, null)
+  if (Array.isArray(stored)) return stored
+  if (id === DEFAULT_FAVORITE_GROUP_ID) {
+    // 舊版單一「我的最愛」遷移進預設清單。
+    const legacy = await getMeta('favorites', [])
+    const order = await getMeta('favoriteOrder', [])
+    const merged = [
+      ...order.filter(value => legacy.includes(value)),
+      ...legacy.filter(value => !order.includes(value))
+    ]
+    await setMeta(`favoriteGroup:${id}`, merged)
+    return merged
+  }
+  return []
+}
+
+export async function saveFavoriteGroupOrder(groupID, order) {
+  return setMeta(`favoriteGroup:${groupID || DEFAULT_FAVORITE_GROUP_ID}`, order)
+}
+
+export async function isFavoriteInGroup(groupID, channelID) {
+  return (await getFavoriteGroupIDs(groupID)).includes(channelID)
+}
+
+export async function toggleFavoriteInGroup(groupID, channelID) {
+  const id = groupID || DEFAULT_FAVORITE_GROUP_ID
+  const current = await getFavoriteGroupIDs(id)
+  const next = current.includes(channelID)
+    ? current.filter(value => value !== channelID)
+    : [...current.filter(value => value !== channelID), channelID]
+  await setMeta(`favoriteGroup:${id}`, next)
+  return next
+}
+
+export async function createFavoriteGroup(name) {
+  const groups = await getFavoriteGroups()
+  const group = {
+    id: `fav-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: String(name || '').trim() || `我的最愛 ${groups.length + 1}`
+  }
+  await setMeta('favoriteGroups', [...groups, group])
+  await setMeta(`favoriteGroup:${group.id}`, [])
+  return group
+}
+
+export async function renameFavoriteGroup(groupID, name) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) return null
+  const groups = await getFavoriteGroups()
+  const next = groups.map(group => group.id === groupID ? { ...group, name: trimmed } : group)
+  await setMeta('favoriteGroups', next)
+  return next
+}
+
+export async function deleteFavoriteGroup(groupID) {
+  const groups = await getFavoriteGroups()
+  if (groups.length <= 1) throw new Error('至少要保留一份最愛清單。')
+  const remaining = groups.filter(group => group.id !== groupID)
+  await setMeta('favoriteGroups', remaining)
+  await remove('meta', `favoriteGroup:${groupID}`)
+  if (await getMeta('activeFavoriteGroup', null) === groupID) await setMeta('activeFavoriteGroup', remaining[0].id)
+  return remaining
+}
+
+export async function getFavoriteCounts() {
+  const groups = await getFavoriteGroups()
+  const counts = {}
+  for (const group of groups) counts[group.id] = (await getFavoriteGroupIDs(group.id)).length
+  return counts
+}
+
+// 目前作用清單的便利函式，沿用舊的呼叫方式。
+export async function getFavorites() { return getFavoriteGroupIDs(await getActiveFavoriteGroupID()) }
+export async function isFavorite(channelID) { return isFavoriteInGroup(await getActiveFavoriteGroupID(), channelID) }
+export async function toggleFavorite(channelID) { return toggleFavoriteInGroup(await getActiveFavoriteGroupID(), channelID) }
 
 export async function deleteChannel(channelID) {
   const deleted = [...await getDeleted()]
   if (!deleted.includes(channelID)) deleted.push(channelID)
   await setMeta('deleted', deleted)
-  await setMeta('favorites', (await getFavorites()).filter(id => id !== channelID))
-  await setMeta('favoriteOrder', (await getFavoriteOrder()).filter(id => id !== channelID))
+  const groups = await getFavoriteGroups()
+  for (const group of groups) {
+    const ids = await getFavoriteGroupIDs(group.id)
+    if (ids.includes(channelID)) await setMeta(`favoriteGroup:${group.id}`, ids.filter(id => id !== channelID))
+  }
+  await setMeta('favoriteOrder', (await getMeta('favoriteOrder', [])).filter(id => id !== channelID))
 }
 
 export async function saveChannelOrder(order) { return setMeta('channelOrder', order) }
 
 export async function getFilteredChannels(category = 'all') {
-  const [all, deleted, favorites, favoriteOrder, channelOrder] = await Promise.all([
-    getAllChannels(), getDeleted(), getFavorites(), getFavoriteOrder(), getChannelOrder()
+  const [all, deleted, channelOrder] = await Promise.all([
+    getAllChannels(), getDeleted(), getChannelOrder()
   ])
-  const favoriteSet = new Set(favorites)
   const available = all.filter(channel => !deleted.has(channel.id))
-  const pool = category === 'favorites'
-    ? available.filter(channel => favoriteSet.has(channel.id))
-    : available
-  const explicit = category === 'favorites' ? favoriteOrder : channelOrder
+  const groupID = favoriteGroupID(category)
+  let pool = available
+  let explicit = channelOrder
+  let favoriteSet = new Set()
+  if (groupID) {
+    const ids = await getFavoriteGroupIDs(groupID)
+    favoriteSet = new Set(ids)
+    pool = available.filter(channel => favoriteSet.has(channel.id))
+    explicit = ids
+  }
 
   // 位置固定：先照已保存的順序，其餘頻道依加入順序排在後面。
   const byID = new Map(pool.map(channel => [channel.id, channel]))
@@ -236,7 +336,7 @@ export async function getFilteredChannels(category = 'all') {
       seen.add(channel.id)
     }
   }
-  return { channels, favorites: favoriteSet }
+  return { channels, favorites: favoriteSet, groupID: groupID || null, total: available.length }
 }
 
 export async function reorderChannels(firstID, secondID) {
