@@ -3,19 +3,26 @@ import {
   getFilteredChannels,
   getPlaylists,
   getChannelOrder,
-  getFavoriteOrder,
   saveChannelOrder,
-  saveFavoriteOrder,
   savePlaylist,
   removePlaylist,
   importM3U,
-  toggleFavorite,
-  isFavorite,
   deleteChannel,
   isBlockedChannel,
   countryDisplayName,
   flagForCountry,
-  parseM3U
+  parseM3U,
+  getFavoriteGroups,
+  getFavoriteGroupIDs,
+  getFavoriteCounts,
+  getActiveFavoriteGroupID,
+  setActiveFavoriteGroupID,
+  saveFavoriteGroupOrder,
+  toggleFavoriteInGroup,
+  createFavoriteGroup,
+  renameFavoriteGroup,
+  deleteFavoriteGroup,
+  favoriteGroupID
 } from './store.js'
 import { loadCatalog } from './catalog.js'
 
@@ -53,7 +60,11 @@ const state = {
   controlsVisible: true,
   baseChannels: [],
   channels: [],
+  libraryCount: 0,
   favorites: new Set(),
+  favoriteGroups: [],
+  activeGroupID: null,
+  groupFavoriteSets: new Map(),
   reorderActive: false,
   reorderSelectedID: null,
   reorderSnapshot: [],
@@ -170,6 +181,17 @@ function updateControlVisibility() {
 }
 
 function modeCount() { return { '4x4': 4, '5x5': 5, '6x6': 6, '7x7': 7 }[state.mode] || 4 }
+
+// 目前作用中的最愛清單：正在瀏覽的清單，否則為上次使用的清單。
+function currentFavoriteGroupID() {
+  return favoriteGroupID(state.category) || state.activeGroupID || state.favoriteGroups[0]?.id || null
+}
+
+function currentFavoriteGroup() {
+  const id = currentFavoriteGroupID()
+  return state.favoriteGroups.find(group => group.id === id) || null
+}
+
 function visiblePageSize() { return 4 * modeCount() - 4 }
 function pageCount() { return Math.max(1, Math.ceil(state.channels.length / visiblePageSize())) }
 function pageChannels() {
@@ -200,9 +222,21 @@ function centerGeometry(count, width, height) {
 }
 
 async function loadState() {
+  state.favoriteGroups = await getFavoriteGroups()
+  state.activeGroupID = await getActiveFavoriteGroupID()
+  const browsing = favoriteGroupID(state.category)
+  if (browsing && !state.favoriteGroups.some(group => group.id === browsing)) {
+    state.category = 'all'
+    localStorage.setItem('oc-category', state.category)
+  }
   const result = await getFilteredChannels(state.category)
   state.baseChannels = result.channels
-  state.favorites = result.favorites
+  state.libraryCount = result.total ?? result.channels.length
+  state.groupFavoriteSets = new Map()
+  for (const group of state.favoriteGroups) {
+    state.groupFavoriteSets.set(group.id, new Set(await getFavoriteGroupIDs(group.id)))
+  }
+  state.favorites = state.groupFavoriteSets.get(currentFavoriteGroupID()) || new Set()
   state.channels = state.country === 'ALL'
     ? [...state.baseChannels]
     : state.baseChannels.filter(channel => channel.country === state.country)
@@ -233,6 +267,32 @@ function renderEmpty() {
   app.append(shell)
 }
 
+// 目前清單沒有頻道時，仍保留工具列，讓使用者能切換清單或國家。
+function renderWallEmpty() {
+  const group = currentFavoriteGroup()
+  const filtered = state.country !== 'ALL'
+  const title = filtered
+    ? `沒有符合「${countryDisplayName(state.country)}」的頻道`
+    : group ? `「${group.name}」還沒有頻道` : '這個畫面還沒有頻道'
+  const hint = filtered
+    ? '用上方國家選單切回「所有國家」，或切換到其他清單。'
+    : '在任一頻道上按右鍵（手機為長按），於「我的最愛清單」中即可把頻道加入這份清單。'
+  const others = state.favoriteGroups.filter(item => item.id !== currentFavoriteGroupID())
+  return element('div', { className: 'wall-empty' },
+    element('div', { className: 'wall-empty-mark', text: group ? '★' : '＋' }),
+    element('h2', { text: title }),
+    element('p', { text: hint }),
+    element('div', { className: 'wall-empty-actions' },
+      element('button', { onclick: () => selectCategory('all'), text: '全部頻道' }),
+      ...others.map(item => element('button', {
+        onclick: () => selectCategory(`fav:${item.id}`),
+        text: `★ ${item.name}`
+      })),
+      element('button', { onclick: promptNewFavoriteGroup, text: '＋ 新增最愛清單' })
+    )
+  )
+}
+
 function renderToolbar() {
   const countryCounts = new Map()
   for (const channel of state.baseChannels) countryCounts.set(channel.country, (countryCounts.get(channel.country) || 0) + 1)
@@ -241,7 +301,21 @@ function renderToolbar() {
   state.toolbar = element('div', { className: 'app-toolbar' },
     element('div', { className: 'brand' }, element('span', { className: 'brand-mark', text: 'O' }), 'IPTV WALL'),
     element('button', { className: state.category === 'all' ? 'active' : '', onclick: () => selectCategory('all'), text: '全部頻道' }),
-    element('button', { className: state.category === 'favorites' ? 'active' : '', onclick: () => selectCategory('favorites'), text: '我的最愛' }),
+    ...state.favoriteGroups.map(group => {
+      const value = `fav:${group.id}`
+      const button = element('button', {
+        className: `toolbar-favorite${state.category === value ? ' active' : ''}`,
+        title: `${group.name} · 右鍵可重新命名或刪除`,
+        onclick: () => selectCategory(value),
+        text: `★ ${group.name}`
+      })
+      button.addEventListener('contextmenu', event => {
+        event.preventDefault()
+        showFavoriteGroupMenu(event.clientX, event.clientY, group)
+      })
+      return button
+    }),
+    element('button', { className: 'toolbar-add-favorite', title: '新增最愛清單', onclick: promptNewFavoriteGroup, text: '＋' }),
     element('select', { onchange: event => { state.country = event.target.value; state.page = 0; render() } },
       element('option', { value: 'ALL', selected: state.country === 'ALL', text: '所有國家' }),
       ...countries.map(([country, count]) => element('option', {
@@ -366,7 +440,11 @@ function createHero(channel, geometry) {
   hero.append(state.heroInfo)
 
   state.heroControls = element('div', { className: 'hero-controls' },
-    element('button', { title: '我的最愛', onclick: event => { event.stopPropagation(); toggleHeroFavorite() }, text: state.favorites.has(channel.id) ? '★' : '☆' }),
+    element('button', {
+      title: `我的最愛${currentFavoriteGroup() ? ` · ${currentFavoriteGroup().name}` : ''}`,
+      onclick: event => { event.stopPropagation(); toggleHeroFavorite() },
+      text: state.favorites.has(channel.id) ? '★' : '☆'
+    }),
     element('button', { title: state.paused ? '繼續播放' : '全部暫停', onclick: event => { event.stopPropagation(); toggleAllPlayback() }, text: state.paused ? '▶' : '⏸' }),
     element('button', { title: '從播放牆移除', onclick: event => { event.stopPropagation(); requestDelete(channel) }, text: '✕' })
   )
@@ -385,12 +463,16 @@ function createHero(channel, geometry) {
 function layoutWall() {
   if (!state.surface) return
   state.surface.innerHTML = ''
+  const page = pageChannels()
+  if (!page.length) {
+    state.surface.append(renderWallEmpty())
+    return
+  }
   const width = state.surface.clientWidth
   const height = state.surface.clientHeight
   const count = modeCount()
   const cellWidth = width / count
   const cellHeight = height / count
-  const page = pageChannels()
 
   if (!state.fullscreen) {
     const cells = perimeterCells(count)
@@ -448,7 +530,7 @@ async function render() {
   closeContextMenu()
   closeModal()
   await loadState()
-  if (!state.channels.length) { renderEmpty(); return }
+  if (!state.libraryCount) { renderEmpty(); return }
 
   app.innerHTML = ''
   const shell = element('div', { className: `app-shell${state.fullscreen ? ' is-fullscreen' : ''}` })
@@ -493,6 +575,11 @@ function selectCategory(category) {
   state.country = 'ALL'
   state.page = 0
   localStorage.setItem('oc-category', category)
+  const groupID = favoriteGroupID(category)
+  if (groupID) {
+    state.activeGroupID = groupID
+    setActiveFavoriteGroupID(groupID)
+  }
   render()
 }
 
@@ -526,7 +613,11 @@ function toggleFullscreen() {
 
 async function toggleHeroFavorite() {
   if (!state.featuredID) return
-  await toggleFavorite(state.featuredID)
+  const groupID = currentFavoriteGroupID()
+  if (!groupID) return
+  await toggleFavoriteInGroup(groupID, state.featuredID)
+  state.activeGroupID = groupID
+  await setActiveFavoriteGroupID(groupID)
   await render()
 }
 
@@ -549,9 +640,7 @@ function beginReorder(channel) {
   state.reorderActive = true
   state.reorderSelectedID = channel.id
   state.reorderCategory = state.category
-  state.reorderSnapshot = state.category === 'favorites'
-    ? [...state.baseChannels.map(item => item.id)]
-    : [...state.baseChannels.map(item => item.id)]
+  state.reorderSnapshot = [...state.baseChannels.map(item => item.id)]
   showControls()
   layoutWall()
 }
@@ -571,7 +660,8 @@ async function handleReorderClick(channel) {
   const second = ids.indexOf(channel.id)
   if (first >= 0 && second >= 0) {
     ;[ids[first], ids[second]] = [ids[second], ids[first]]
-    if (state.reorderCategory === 'favorites') await saveFavoriteOrder(ids)
+    const groupID = favoriteGroupID(state.reorderCategory)
+    if (groupID) await saveFavoriteGroupOrder(groupID, ids)
     else await saveChannelOrder(ids)
   }
   state.reorderSelectedID = channel.id
@@ -589,7 +679,8 @@ async function finishReorder() {
 
 async function cancelReorder() {
   if (state.reorderSnapshot.length) {
-    if (state.reorderCategory === 'favorites') await saveFavoriteOrder(state.reorderSnapshot)
+    const groupID = favoriteGroupID(state.reorderCategory)
+    if (groupID) await saveFavoriteGroupOrder(groupID, state.reorderSnapshot)
     else await saveChannelOrder(state.reorderSnapshot)
   }
   state.reorderActive = false
@@ -631,7 +722,7 @@ function showMiniMenu(x, y, channel) {
       addMenuItem(menu, '取消調整', cancelReorder)
       return
     }
-    addMenuItem(menu, `${state.favorites.has(channel.id) ? '★ 移除' : '☆ 加入'}我的最愛`, async () => { await toggleFavorite(channel.id); render() })
+    addFavoriteMenuItems(menu, channel)
     addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel))
     addMenuItem(menu, '↕ 調整頻道位置', () => beginReorder(channel))
     addSeparator(menu)
@@ -641,7 +732,7 @@ function showMiniMenu(x, y, channel) {
 
 function showHeroMenu(x, y, channel) {
   showMenu(x, y, menu => {
-    addMenuItem(menu, `${state.favorites.has(channel.id) ? '★ 移除' : '☆ 加入'}我的最愛`, async () => { await toggleFavorite(channel.id); render() })
+    addFavoriteMenuItems(menu, channel)
     addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel))
     addSeparator(menu)
     addMenuItem(menu, state.paused ? '▶ 繼續播放' : '⏸ 全部暫停', toggleAllPlayback)
@@ -652,7 +743,10 @@ function showHeroMenu(x, y, channel) {
       addMenuItem(menu, '› 下一組', () => changePage(1))
     }
     addMenuItem(menu, `${state.category === 'all' ? '✓' : '□'} 全部頻道`, () => selectCategory('all'))
-    addMenuItem(menu, `${state.category === 'favorites' ? '✓' : '□'} 我的最愛`, () => selectCategory('favorites'))
+    for (const group of state.favoriteGroups) {
+      const value = `fav:${group.id}`
+      addMenuItem(menu, `${state.category === value ? '✓' : '□'} ★ ${group.name}`, () => selectCategory(value))
+    }
     for (const mode of ['4x4', '5x5', '6x6', '7x7']) {
       addMenuItem(menu, `${state.mode === mode ? '✓' : '□'} ${mode.replace('x', '×')}`, () => selectMode(mode))
     }
@@ -661,6 +755,22 @@ function showHeroMenu(x, y, channel) {
     addSeparator(menu)
     addMenuItem(menu, '✕ 從播放牆移除', () => requestDelete(channel), { danger: true })
   })
+}
+
+// 在右鍵選單列出所有最愛清單，勾選可切換該頻道是否屬於清單。
+function addFavoriteMenuItems(menu, channel) {
+  menu.append(element('div', { className: 'context-menu-label', text: '我的最愛清單' }))
+  for (const group of state.favoriteGroups) {
+    const member = state.groupFavoriteSets.get(group.id)?.has(channel.id)
+    addMenuItem(menu, `${member ? '★ 從' : '☆ 加入'}「${group.name}」`, async () => {
+      await toggleFavoriteInGroup(group.id, channel.id)
+      state.activeGroupID = group.id
+      await setActiveFavoriteGroupID(group.id)
+      await render()
+    })
+  }
+  addMenuItem(menu, '＋ 新增最愛清單…', promptNewFavoriteGroup)
+  addSeparator(menu)
 }
 
 function openModal(content) {
@@ -885,24 +995,151 @@ function openImport() {
   input.focus()
 }
 
+function editFavoriteGroupModal({ title, initial = '', confirmLabel, onConfirm }) {
+  const input = element('input', { type: 'text', value: initial, placeholder: '例如：財經新聞、體育直播、台灣頻道' })
+  const message = element('div', { className: 'modal-message' })
+  const submit = async () => {
+    const name = input.value.trim()
+    if (!name) { message.textContent = '請輸入清單名稱。'; input.focus(); return }
+    const error = await onConfirm(name)
+    if (error) { message.textContent = error; return }
+    closeModal()
+  }
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') submit() })
+  openModal(element('div', {},
+    element('h2', { text: title }),
+    element('div', { className: 'form-field' }, element('label', { text: '清單名稱' }), input),
+    message,
+    element('div', { className: 'modal-actions' },
+      element('button', { onclick: closeModal, text: '取消' }),
+      element('button', { className: 'primary', onclick: submit, text: confirmLabel })
+    )
+  ))
+  input.focus()
+  input.select()
+}
+
+function promptNewFavoriteGroup(then) {
+  editFavoriteGroupModal({
+    title: '新增最愛清單',
+    confirmLabel: '建立',
+    onConfirm: async name => {
+      const group = await createFavoriteGroup(name)
+      state.activeGroupID = group.id
+      await setActiveFavoriteGroupID(group.id)
+      state.category = `fav:${group.id}`
+      localStorage.setItem('oc-category', state.category)
+      toast(`已建立「${group.name}」`)
+      await render()
+      if (typeof then === 'function') await then()
+    }
+  })
+}
+
+function promptRenameFavoriteGroup(group, then) {
+  editFavoriteGroupModal({
+    title: '重新命名最愛清單',
+    initial: group.name,
+    confirmLabel: '儲存',
+    onConfirm: async name => {
+      await renameFavoriteGroup(group.id, name)
+      toast('已更新清單名稱')
+      await render()
+      if (typeof then === 'function') await then()
+    }
+  })
+}
+
+async function removeFavoriteGroup(group) {
+  if (!window.confirm(`確定要刪除「${group.name}」嗎？清單內的頻道會留在播放牆上。`)) return
+  try { await deleteFavoriteGroup(group.id) }
+  catch (error) { toast(error.message); return }
+  toast(`已刪除「${group.name}」`)
+  if (favoriteGroupID(state.category) === group.id) {
+    state.category = 'all'
+    localStorage.setItem('oc-category', state.category)
+  }
+  await render()
+}
+
+function showFavoriteGroupMenu(x, y, group) {
+  showMenu(x, y, menu => {
+    addMenuItem(menu, `★ 檢視「${group.name}」`, () => selectCategory(`fav:${group.id}`))
+    addMenuItem(menu, '✎ 重新命名清單', () => promptRenameFavoriteGroup(group))
+    addSeparator(menu)
+    addMenuItem(menu, '＋ 新增最愛清單…', promptNewFavoriteGroup)
+    addSeparator(menu)
+    addMenuItem(menu, '🗑 刪除這份清單', () => removeFavoriteGroup(group), { danger: true })
+  })
+}
+
 async function openPlaylistManager() {
-  const list = element('div', { className: 'catalog-list' })
+  const favoritesList = element('div', { className: 'manager-list' })
+  const sourceList = element('div', { className: 'manager-list' })
+  const groups = await getFavoriteGroups()
+  const counts = await getFavoriteCounts()
+
+  for (const group of groups) {
+    favoritesList.append(element('div', { className: 'playlist-row' },
+      element('div', { className: 'playlist-info' },
+        element('div', { className: 'playlist-name', text: `★ ${group.name}` }),
+        element('div', { className: 'playlist-meta', text: `${counts[group.id] || 0} 個頻道` })
+      ),
+      element('button', {
+        className: 'catalog-add',
+        title: '重新命名',
+        text: '✎',
+        onclick: async () => { await promptRenameFavoriteGroup(group, openPlaylistManager) }
+      }),
+      element('button', {
+        className: 'catalog-add danger',
+        title: groups.length <= 1 ? '至少要保留一份最愛清單' : '刪除清單',
+        disabled: groups.length <= 1,
+        text: '×',
+        onclick: async () => { await removeFavoriteGroup(group); await openPlaylistManager() }
+      })
+    ))
+  }
+
   const playlists = await getPlaylists()
-  if (!playlists.length) list.append(element('div', { className: 'loading', text: '尚無播放清單' }))
+  if (!playlists.length) sourceList.append(element('div', { className: 'loading', text: '尚無播放清單' }))
   for (const playlist of playlists) {
-    const row = element('div', { className: 'playlist-row' },
+    sourceList.append(element('div', { className: 'playlist-row' },
       element('div', { className: 'playlist-info' },
         element('div', { className: 'playlist-name', text: playlist.name }),
         element('div', { className: 'playlist-meta', text: `${playlist.channelCount} 個頻道 · ${playlist.sourceURL}` })
       ),
-      element('button', { className: 'catalog-add', text: '×' })
-    )
-    row.querySelector('button').addEventListener('click', async () => { await removePlaylist(playlist.id); closeModal(); render() })
-    list.append(row)
+      element('button', {
+        className: 'catalog-add danger',
+        title: '移除這份來源',
+        text: '×',
+        onclick: async () => {
+          if (!window.confirm(`確定要移除來源「${playlist.name}」嗎？此來源已加入的頻道會留在播放牆上。`)) return
+          await removePlaylist(playlist.id); closeModal(); render()
+        }
+      })
+    ))
   }
+
   openModal(element('div', {},
     element('h2', { text: '頻道庫與來源' }),
-    list,
+    element('p', { className: 'modal-note', text: '「我的最愛清單」可建立多份自訂名稱的清單，每份各自保留自己的頻道與排序。' }),
+    element('div', { className: 'manager-section' },
+      element('div', { className: 'manager-heading' },
+        element('h3', { text: '我的最愛清單' }),
+        element('button', {
+          className: 'catalog-add',
+          title: '新增最愛清單',
+          text: '＋',
+          onclick: async () => { await promptNewFavoriteGroup(openPlaylistManager) }
+        })
+      ),
+      favoritesList
+    ),
+    element('div', { className: 'manager-section' },
+      element('div', { className: 'manager-heading' }, element('h3', { text: '頻道來源' })),
+      sourceList
+    ),
     element('div', { className: 'modal-actions' },
       element('button', { className: 'primary', onclick: () => { closeModal(); openImport() }, text: '+ 匯入新清單' }),
       element('button', { onclick: closeModal, text: '關閉' })
@@ -933,6 +1170,12 @@ function installGlobalActivityHandlers() {
 
 async function main() {
   await initDB()
+  // 舊版的單一「我的最愛」分類改指向目前的預設清單。
+  const groups = await getFavoriteGroups()
+  if (state.category === 'favorites') state.category = `fav:${await getActiveFavoriteGroupID()}`
+  const browsing = favoriteGroupID(state.category)
+  if (browsing && !groups.some(group => group.id === browsing)) state.category = 'all'
+  localStorage.setItem('oc-category', state.category)
   installGlobalActivityHandlers()
   await render()
 }

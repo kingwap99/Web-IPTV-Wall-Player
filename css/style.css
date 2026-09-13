@@ -37,6 +37,8 @@ button { cursor: pointer; }
 .app-toolbar button.active { color: #000; background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
 .app-toolbar select { max-width: 175px; }
 .toolbar-group { display: flex; gap: 3px; }
+.app-toolbar button.toolbar-favorite { max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-toolbar button.toolbar-add-favorite { padding: 5px 9px; font-weight: 800; }
 
 .wall-root { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #000; }
 .wall-surface { position: absolute; inset: 0; }
@@ -105,11 +107,20 @@ button { cursor: pointer; }
 .empty-actions button { padding: 11px 18px; border-radius: 8px; border: 1px solid #3a3a3a; color: #ddd; background: #1d1d1d; font-size: 13px; font-weight: 700; }
 .empty-actions button.primary { color: #000; border-color: var(--yellow); background: var(--yellow); }
 
+.wall-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; padding: 32px; text-align: center; }
+.wall-empty-mark { display: flex; align-items: center; justify-content: center; width: 62px; height: 62px; margin-bottom: 6px; border-radius: 20px; color: var(--yellow); background: rgba(245,197,66,.12); font-size: 28px; }
+.wall-empty h2 { margin: 0; color: #fff; font-size: 21px; }
+.wall-empty p { max-width: 520px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.wall-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+.wall-empty-actions button { padding: 9px 15px; border: 1px solid #3a3a3a; border-radius: 9px; color: #ddd; background: #1d1d1d; font-size: 12px; font-weight: 700; }
+.wall-empty-actions button:hover { background: #2a2a2a; color: #fff; }
+
 .context-menu { position: fixed; min-width: 225px; z-index: 120; padding: 5px 0; overflow: hidden; border: 1px solid #3b3b3b; border-radius: 10px; background: #1c1c1c; box-shadow: 0 10px 34px rgba(0,0,0,.65); }
 .context-menu button { display: block; width: 100%; padding: 10px 15px; border: 0; color: #ddd; background: transparent; text-align: left; font-size: 13px; }
 .context-menu button:hover { background: #2b2b2b; }
 .context-menu button.danger { color: var(--red); }
 .context-menu .separator { height: 1px; margin: 4px 0; background: #343434; }
+.context-menu-label { padding: 8px 15px 4px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .6px; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; display: flex; align-items: flex-end; justify-content: center; padding: 0; background: rgba(0,0,0,.72); }
 .modal-panel { position: relative; width: min(680px, 100%); max-height: 88vh; overflow-y: auto; padding: 22px; padding-bottom: calc(22px + var(--safe-bottom)); border-radius: 17px 17px 0 0; background: var(--panel); }
@@ -152,6 +163,14 @@ button { cursor: pointer; }
 .playlist-info { min-width: 0; flex: 1; }
 .playlist-name { color: #fff; font-size: 13px; font-weight: 700; }
 .playlist-meta { margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.manager-section + .manager-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #292929; }
+.manager-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 6px; }
+.manager-heading h3 { margin: 0; }
+.manager-list { max-height: 34vh; overflow-y: auto; }
+.playlist-row .catalog-add { color: #ddd; background: rgba(255,255,255,.1); font-size: 14px; }
+.playlist-row .catalog-add.danger { color: var(--red); background: rgba(227,77,77,.14); }
+.catalog-add.danger { color: var(--red); background: rgba(227,77,77,.15); }
+.catalog-add:disabled { opacity: .3; cursor: default; }
 .loading { padding: 24px; color: var(--muted); text-align: center; }
 .spinner { width: 30px; height: 30px; margin: 0 auto 10px; border: 3px solid #333; border-top-color: var(--yellow); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
