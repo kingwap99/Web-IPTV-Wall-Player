@@ -1,5 +1,5 @@
 // iptv-org catalog — mirrors IPTVOrgExplorerView
-import { getCatalog, saveCatalog, getCatalogMeta, saveCatalogMeta, isBlockedChannel } from './store.js';
+import { getCatalog, saveCatalog, getCatalogMeta, saveCatalogMeta } from './store.js';
 const MAX_AGE=24*60*60*1000;
 
 export async function loadCatalog(force=false){
@@ -21,6 +21,6 @@ function resolve(rawCh,rawSt,rawFe){
   const best={};
   for(const s of rawSt){const cid=s.channel;if(!cid)continue;const ch=byID[cid];if(!ch||ch.is_nsfw||ch.closed||s.user_agent||s.referrer)continue;if((s.label||'').toLowerCase().includes('geo-blocked'))continue;if(!s.url.toLowerCase().includes('.m3u8'))continue;const sc=parseInt((s.quality||'0').replace(/\D/g,''))||0;if(!best[cid]||sc>(best[cid]._score||0))best[cid]={...s,_score:sc}}
   const out=[];
-  for(const[cid,s]of Object.entries(best)){const ch=byID[cid];if(!ch)continue;const langs=s.feed?[...(lf[cid+':'+s.feed]||[])]:[...(lc[cid]||[])];const item={id:'iptv-org:'+cid,name:ch.name,country:ch.country,categories:ch.categories||[],languages:langs.sort(),streamURL:s.url,quality:s.quality};if(isBlockedChannel(item))continue;out.push(item)}
+  for(const[cid,s]of Object.entries(best)){const ch=byID[cid];if(!ch)continue;const langs=s.feed?[...(lf[cid+':'+s.feed]||[])]:[...(lc[cid]||[])];const item={id:'iptv-org:'+cid,name:ch.name,country:ch.country,categories:ch.categories||[],languages:langs.sort(),streamURL:s.url,quality:s.quality};out.push(item)}
   return out
 }
