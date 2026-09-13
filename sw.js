@@ -1,4 +1,4 @@
-const CACHE = 'opencast-v9';
+const CACHE = 'opencast-v10';
 const ASSETS = [
   '/',
   '/index.html',
@@ -26,6 +26,8 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // 共用資料 API 一律走網路，不能快取，否則不同裝置會看到舊資料。
+  if (new URL(e.request.url).pathname.startsWith('/api/')) return;
   e.respondWith(
     caches.match(e.request).then(cached =>
       cached || fetch(e.request).then(resp => {

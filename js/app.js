@@ -1,5 +1,6 @@
 import {
   initDB,
+  initSharedStore,
   getFilteredChannels,
   getPlaylists,
   getChannelOrder,
@@ -1170,6 +1171,10 @@ function installGlobalActivityHandlers() {
 
 async function main() {
   await initDB()
+  await initSharedStore()
+  window.addEventListener('oc-store-sync-failed', event => {
+    toast('無法同步到伺服器：' + (event.detail || '網路錯誤') + '，稍後會自動重試。')
+  })
   // 舊版的單一「我的最愛」分類改指向目前的預設清單。
   const groups = await getFavoriteGroups()
   if (state.category === 'favorites') state.category = `fav:${await getActiveFavoriteGroupID()}`
