@@ -15,6 +15,7 @@ Web 版多頻道 IPTV Wall 播放器，互動規格以 IPTV Wall Player macOS �
 - 多份可自訂名稱的最愛清單：工具列的 ★ 按鈕切換、＋ 新增清單
 - 頻道庫可新增／改名／刪除最愛清單，並管理清單內頻道
 - 全部頻道與各最愛清單分類切換
+- 站台共用資料：播放清單與我的最愛存在 server（data/wall.json），所有 client 共用同一份複本
 - 國家篩選與頻道數量
 - iptv-org 探索器：搜尋、國家篩選、頻道加入播放牆
 - M3U 匯入與頻道庫管理
@@ -25,14 +26,17 @@ Web 版多頻道 IPTV Wall 播放器，互動規格以 IPTV Wall Player macOS �
 
 ```bash
 cd opencast-grid
-python3 -m http.server 8080
+python3 server.py
 ```
 
-瀏覽器開啟：`http://localhost:8080`
+本機瀏覽器開啟 `http://localhost:8080`，網內其他裝置用 `http://<本機IP>:8080`。
+`server.py` 同時提供靜態檔案與共用資料 API（`/api/state`）；播放清單、我的最愛與排序存到 `data/wall.json`，所有 client 共用同一份。
 
 ## 部署
 
-這是純靜態網站，可直接部署到 Cloudflare Pages、Vercel、Netlify 或其他靜態主機。頻道、收藏、排序與播放清單資料保存在使用者瀏覽器的 IndexedDB；目前不需要後端或自己的資料庫。
+自架站台請直接執行 `python3 server.py`，共用資料會存入站台的 `data/wall.json`（已加入 .gitignore，不會推上 GitHub）。
+
+也可以部署到 Cloudflare Pages、Vercel、Netlify 等靜態主機；這種模式下共用 API 不存在，每個瀏覽器退回各自本機的 IndexedDB，功能照常可用，只是不會跨裝置共享。
 
 ## 內容來源
 

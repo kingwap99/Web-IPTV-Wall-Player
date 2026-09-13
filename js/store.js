@@ -35,10 +35,177 @@ function request(storeName, mode, operation) {
   })
 }
 
-function get(store, key) { return request(store, 'readonly', objectStore => objectStore.get(key)) }
-function getAll(store) { return request(store, 'readonly', objectStore => objectStore.getAll()) }
-function put(store, value) { return request(store, 'readwrite', objectStore => objectStore.put(value)) }
-function remove(store, key) { return request(store, 'readwrite', objectStore => objectStore.delete(key)) }
+function idbGet(store, key) { return request(store, 'readonly', objectStore => objectStore.get(key)) }
+function idbGetAll(store) { return request(store, 'readonly', objectStore => objectStore.getAll()) }
+function idbPut(store, value) { return request(store, 'readwrite', objectStore => objectStore.put(value)) }
+function idbRemove(store, key) { return request(store, 'readwrite', objectStore => objectStore.delete(key)) }
+
+// ---- 共用資料層：站台伺服器（所有 client 共用一份）或退回本機 IndexedDB ----
+// 共用範圍：playlists（M3U 來源與探索器匯入的頻道）＋ meta 中與最愛／排序／刪除
+// 相關的鍵。catalog（iptv-org 探索快取）與 catalog-meta 保持本機，UI 偏好另存 localStorage。
+const SHARED_META_KEYS = new Set([
+  'deleted', 'channelOrder', 'favoriteGroups', 'activeFavoriteGroup',
+  'favorites', 'favoriteOrder'
+])
+const isSharedMetaKey = key => SHARED_META_KEYS.has(key) || String(key).startsWith('favoriteGroup:')
+
+const storeState = { mode: 'idb', serverDoc: null, syncChain: Promise.resolve() }
+
+function sharedSnapshot() {
+  return {
+    playlists: storeState.serverDoc?.playlists || [],
+    meta: storeState.serverDoc?.meta || {}
+  }
+}
+
+function scheduleServerSync() {
+  const snapshot = sharedSnapshot()
+  storeState.syncChain = storeState.syncChain
+    .catch(() => {})
+    .then(() => fetch('/api/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot)
+    }).then(response => {
+      if (!response.ok) throw new Error('伺服器回應 HTTP ' + response.status)
+    }))
+    .catch(error => {
+      console.warn('[store] 同步到伺服器失敗：', error.message)
+      window.dispatchEvent(new CustomEvent('oc-store-sync-failed', { detail: error.message }))
+    })
+  return storeState.syncChain
+}
+
+function get(store, key) {
+  if (store === 'meta' && storeState.mode === 'server' && isSharedMetaKey(key)) {
+    const value = storeState.serverDoc.meta[key]
+    return Promise.resolve(value === undefined ? undefined : { key, value: JSON.parse(JSON.stringify(value)) })
+  }
+  return idbGet(store, key)
+}
+
+function getAll(store) {
+  if (store === 'playlists' && storeState.mode === 'server') {
+    return Promise.resolve([...(storeState.serverDoc.playlists || [])])
+  }
+  return idbGetAll(store)
+}
+
+function put(store, value) {
+  if (store === 'playlists' && storeState.mode === 'server') {
+    const list = storeState.serverDoc.playlists || (storeState.serverDoc.playlists = [])
+    const index = list.findIndex(item => item.id === value.id)
+    if (index >= 0) list[index] = value
+    else list.push(value)
+    void scheduleServerSync()
+    void idbPut('playlists', value).catch(() => {})
+    return Promise.resolve(value)
+  }
+  if (store === 'meta' && storeState.mode === 'server' && isSharedMetaKey(value.key)) {
+    storeState.serverDoc.meta[value.key] = value.value
+    void scheduleServerSync()
+    void idbPut('meta', value).catch(() => {})
+    return Promise.resolve(value)
+  }
+  return idbPut(store, value)
+}
+
+function remove(store, key) {
+  if (store === 'playlists' && storeState.mode === 'server') {
+    const list = storeState.serverDoc.playlists || []
+    storeState.serverDoc.playlists = list.filter(item => item.id !== key)
+    void scheduleServerSync()
+    void idbRemove('playlists', key).catch(() => {})
+    return Promise.resolve()
+  }
+  if (store === 'meta' && storeState.mode === 'server' && isSharedMetaKey(key)) {
+    delete storeState.serverDoc.meta[key]
+    void scheduleServerSync()
+    void idbRemove('meta', key).catch(() => {})
+    return Promise.resolve()
+  }
+  return idbRemove(store, key)
+}
+
+function normalizeSharedDoc(doc) {
+  const out = { playlists: [], meta: {} }
+  if (doc && Array.isArray(doc.playlists)) out.playlists = doc.playlists
+  if (doc && doc.meta && typeof doc.meta === 'object') {
+    for (const [key, value] of Object.entries(doc.meta)) {
+      if (isSharedMetaKey(key)) out.meta[key] = value
+    }
+  }
+  return out
+}
+
+async function readLocalShared() {
+  const playlists = await idbGetAll('playlists').catch(() => [])
+  const meta = {}
+  const records = await idbGetAll('meta').catch(() => [])
+  for (const record of records) {
+    if (isSharedMetaKey(record.key)) meta[record.key] = record.value
+  }
+  return { playlists, meta }
+}
+
+async function mirrorSharedToIdb() {
+  const doc = storeState.serverDoc
+  try {
+    const transaction = database.transaction('playlists', 'readwrite')
+    const store = transaction.objectStore('playlists')
+    await new Promise((resolve, reject) => {
+      const clearRequest = store.clear()
+      clearRequest.onsuccess = () => { for (const playlist of doc.playlists) store.put(playlist) }
+      clearRequest.onerror = () => reject(clearRequest.error)
+      transaction.oncomplete = resolve
+      transaction.onerror = () => reject(transaction.error)
+    })
+    const existing = await idbGetAll('meta').catch(() => [])
+    for (const record of existing) {
+      if (isSharedMetaKey(record.key) && !(record.key in doc.meta)) await idbRemove('meta', record.key).catch(() => {})
+    }
+    for (const [key, value] of Object.entries(doc.meta)) {
+      await idbPut('meta', { key, value }).catch(() => {})
+    }
+  } catch (error) {
+    console.warn('[store] 本機鏡像更新失敗：', error.message)
+  }
+}
+
+// 啟動時決定資料層模式：連上 server 就用共用文件，否則退回本機 IndexedDB。
+// 第一次接上 server 且 server 還是空的、本機卻已有資料時，把本機資料搬上去共用。
+export async function initSharedStore() {
+  let response
+  try {
+    response = await fetch('/api/state', { cache: 'no-store' })
+  } catch {
+    storeState.mode = 'idb'
+    return
+  }
+  if (!response.ok) {
+    storeState.mode = 'idb'
+    return
+  }
+
+  let serverDoc = {}
+  try { serverDoc = await response.json() } catch { serverDoc = {} }
+  const serverBlank = !(serverDoc.playlists?.length || Object.keys(serverDoc.meta || {}).length)
+  storeState.mode = 'server'
+  storeState.serverDoc = { playlists: [], meta: {} }
+
+  if (!serverBlank) {
+    storeState.serverDoc = normalizeSharedDoc(serverDoc)
+    await mirrorSharedToIdb()
+    return
+  }
+
+  const local = await readLocalShared()
+  if (local.playlists.length || Object.keys(local.meta).length) {
+    storeState.serverDoc = normalizeSharedDoc(local)
+    storeState.serverDoc.meta = local.meta
+    await scheduleServerSync()
+  }
+}
 
 function readJSON(value, fallback) {
   try { return value == null ? fallback : JSON.parse(value) }
