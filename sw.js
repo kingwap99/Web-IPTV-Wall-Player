@@ -1,4 +1,4 @@
-const CACHE = 'web-iptv-wall-v2';
+const CACHE = 'web-iptv-wall-v3';
 const ASSETS = [
   '/',
   '/index.html',

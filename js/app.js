@@ -258,7 +258,7 @@ function renderEmpty() {
           }))
         )
       ),
-      element('h1', { text: '建立你的第一面 IPTV Wall' }),
+      element('h1', { text: '建立你的第一面 IPTV Wall Player' }),
       element('p', { text: '一個畫面，同時看見世界。選擇一種方式加入你的頻道；Web IPTV Wall player 不內建或代管影音內容。' }),
       element('div', { className: 'empty-actions' },
         element('button', { className: 'primary', onclick: () => openCatalog(), text: '探索公開頻道' }),
@@ -302,7 +302,7 @@ function renderToolbar() {
   const countries = [...countryCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
 
   state.toolbar = element('div', { className: 'app-toolbar' },
-    element('div', { className: 'brand' }, element('img', { className: 'brand-logo', src: '/assets/icon-192.png', alt: '' }), 'IPTV WALL'),
+    element('div', { className: 'brand' }, element('img', { className: 'brand-logo', src: '/assets/icon-192.png', alt: '' }), 'IPTV Wall Player'),
     element('button', { className: state.category === 'all' ? 'active' : '', onclick: () => selectCategory('all'), text: '全部頻道' }),
     ...state.favoriteGroups.map(group => {
       const value = `fav:${group.id}`
@@ -431,7 +431,7 @@ function createHero(channel, geometry) {
   hero.append(element('div', { className: 'hero-brand' },
     element('img', { className: 'hero-brand-logo', src: '/assets/icon-192.png', alt: '' }),
     element('div', {},
-      element('div', { className: 'hero-brand-title', text: 'IPTV WALL' }),
+      element('div', { className: 'hero-brand-title', text: 'IPTV Wall Player' }),
       element('div', { className: 'hero-brand-subtitle', text: 'Multi-Stream Grid Player' })
     )
   ))
