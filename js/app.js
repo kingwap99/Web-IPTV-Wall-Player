@@ -302,7 +302,7 @@ function renderToolbar() {
   const countries = [...countryCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
 
   state.toolbar = element('div', { className: 'app-toolbar' },
-    element('div', { className: 'brand' }, element('img', { className: 'brand-logo', src: '/assets/icon-192.png', alt: '' }), 'IPTV Wall Player'),
+    element('div', { className: 'brand' }, element('img', { className: 'brand-logo', src: 'assets/icon-192.png', alt: '' }), 'IPTV Wall Player'),
     element('button', { className: state.category === 'all' ? 'active' : '', onclick: () => selectCategory('all'), text: '全部頻道' }),
     ...state.favoriteGroups.map(group => {
       const value = `fav:${group.id}`
@@ -429,7 +429,7 @@ function createHero(channel, geometry) {
 
   hero.append(element('div', { className: 'hero-gradient' }))
   hero.append(element('div', { className: 'hero-brand' },
-    element('img', { className: 'hero-brand-logo', src: '/assets/icon-192.png', alt: '' }),
+    element('img', { className: 'hero-brand-logo', src: 'assets/icon-192.png', alt: '' }),
     element('div', {},
       element('div', { className: 'hero-brand-title', text: 'IPTV Wall Player' }),
       element('div', { className: 'hero-brand-subtitle', text: 'Multi-Stream Grid Player' })
