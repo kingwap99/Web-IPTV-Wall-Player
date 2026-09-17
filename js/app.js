@@ -453,7 +453,11 @@ function createHero(channel, geometry) {
   )
   hero.append(state.heroControls)
 
-  hero.addEventListener('click', () => toggleFullscreen())
+  // 排序進行中，中央大頻道和小頻道一樣是交換的目標，不是進全螢幕的開關。
+  hero.addEventListener('click', () => {
+    if (state.reorderActive) handleReorderClick(channel)
+    else toggleFullscreen()
+  })
   hero.addEventListener('contextmenu', event => {
     event.preventDefault()
     showHeroMenu(event.clientX, event.clientY, channel)
@@ -608,6 +612,12 @@ function changePage(delta) {
 }
 
 function toggleFullscreen() {
+  // 排序進行中不進全螢幕：全螢幕只留中央大頻道，小頻道與排序工具列都會消失，
+  // 使用者會卡在沒有「完成／取消」可按的狀態。
+  if (state.reorderActive) {
+    toast('請先按「完成」或「取消」結束頻道排序。')
+    return
+  }
   if (state.fullscreen) {
     state.mode = state.modeBeforeFullscreen
     state.page = state.pageBeforeFullscreen
@@ -743,8 +753,14 @@ function showMiniMenu(x, y, channel) {
 
 function showHeroMenu(x, y, channel) {
   showMenu(x, y, menu => {
+    if (state.reorderActive) {
+      addMenuItem(menu, '完成調整順序', finishReorder)
+      addMenuItem(menu, '取消調整', cancelReorder)
+      return
+    }
     addFavoriteMenuItems(menu, channel)
     addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel))
+    addMenuItem(menu, '↕ 調整頻道位置', () => beginReorder(channel))
     addSeparator(menu)
     addMenuItem(menu, state.paused ? '▶ 繼續播放' : '⏸ 全部暫停', toggleAllPlayback)
     addMenuItem(menu, `🔊 正常播放音量 · ${Math.round(state.heroVolume * 100)}%`, openVolumePanel)
