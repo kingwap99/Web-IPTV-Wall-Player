@@ -72,6 +72,9 @@ const state = {
   reorderSelectedID: null,
   reorderSnapshot: [],
   reorderCategory: 'all',
+  dragChannelID: null,
+  dragTargetEl: null,
+  dragEndedAt: 0,
   heroPlayer: null,
   resizeObserver: null,
   hideTimer: null,
@@ -390,7 +393,9 @@ function createMiniChannel(channel, cell, width, height) {
     text: state.reorderActive && focused ? '調整位置' : '右鍵顯示更多'
   })))
 
+  mini.dataset.channelId = channel.id
   mini.addEventListener('click', () => {
+    if (justDragged()) return
     if (state.reorderActive) handleReorderClick(channel)
     else setFeatured(channel, true)
   })
@@ -398,13 +403,7 @@ function createMiniChannel(channel, cell, width, height) {
     event.preventDefault()
     showMiniMenu(event.clientX, event.clientY, channel)
   })
-  let pressTimer
-  mini.addEventListener('pointerdown', event => {
-    if (event.pointerType === 'mouse') return
-    pressTimer = setTimeout(() => showMiniMenu(event.clientX, event.clientY, channel), 600)
-  })
-  mini.addEventListener('pointerup', () => clearTimeout(pressTimer))
-  mini.addEventListener('pointercancel', () => clearTimeout(pressTimer))
+  attachDragHandlers(mini, channel, true)
   return mini
 }
 
@@ -453,8 +452,10 @@ function createHero(channel, geometry) {
   )
   hero.append(state.heroControls)
 
+  hero.dataset.channelId = channel.id
   // 排序進行中，中央大頻道和小頻道一樣是交換的目標，不是進全螢幕的開關。
   hero.addEventListener('click', () => {
+    if (justDragged()) return
     if (state.reorderActive) handleReorderClick(channel)
     else toggleFullscreen()
   })
@@ -464,6 +465,7 @@ function createHero(channel, geometry) {
   })
   hero.addEventListener('pointermove', showControls)
   hero.addEventListener('pointerdown', showControls)
+  attachDragHandlers(hero, channel, false)
   return hero
 }
 
@@ -525,7 +527,7 @@ function renderReorderToolbar() {
     className: 'reorder-toolbar',
     style: bottom ? { bottom: '20px' } : { top: '20px' }
   },
-    element('span', { text: '調整順序：點擊另一個頻道交換位置' }),
+    element('span', { text: '調整順序：拖曳頻道到另一台上，或點擊另一台交換位置' }),
     element('button', { onclick: finishReorder, text: '完成' }),
     element('button', { onclick: cancelReorder, text: '取消' })
   )
@@ -666,6 +668,127 @@ function beginReorder(channel) {
   layoutWall()
 }
 
+// ---- 拖曳頻道 ----
+// 用 pointer 事件而不是 HTML5 drag & drop：HTML5 DnD 在觸控裝置上完全不能用。
+const DRAG_THRESHOLD = 8
+
+// 剛拖曳完放開時，瀏覽器還會補一個 click；那個 click 要忽略，否則會多觸發一次點擊行為。
+function justDragged() { return performance.now() - (state.dragEndedAt || 0) < 300 }
+
+// 指標底下是哪一塊頻道磚（小頻道或中央大頻道）。
+function channelTileAt(x, y) {
+  return document.elementFromPoint(x, y)?.closest?.('.mini-channel, .hero-channel') || null
+}
+
+function attachDragHandlers(el, channel, withLongPress) {
+  let pressTimer = null
+  let pointerID = null
+  let startX = 0
+  let startY = 0
+  let dragging = false
+
+  const stopLongPress = () => { clearTimeout(pressTimer); pressTimer = null }
+  const clearTarget = () => {
+    state.dragTargetEl?.classList.remove('is-drop-target')
+    state.dragTargetEl = null
+  }
+  const endDrag = () => {
+    el.classList.remove('is-dragging')
+    clearTarget()
+    state.dragChannelID = null
+    state.dragEndedAt = performance.now()
+    dragging = false
+    pointerID = null
+  }
+
+  el.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    pointerID = event.pointerId
+    startX = event.clientX
+    startY = event.clientY
+    dragging = false
+    if (withLongPress && event.pointerType !== 'mouse') {
+      stopLongPress()
+      pressTimer = setTimeout(() => {
+        pressTimer = null
+        showMiniMenu(event.clientX, event.clientY, channel)
+      }, 600)
+    }
+  })
+
+  el.addEventListener('pointermove', event => {
+    if (pointerID === null || event.pointerId !== pointerID) return
+    if (!dragging) {
+      if (Math.hypot(event.clientX - startX, event.clientY - startY) < DRAG_THRESHOLD) return
+      dragging = true
+      stopLongPress() // 開始拖曳就不該再彈出長按選單
+      state.dragChannelID = channel.id
+      el.classList.add('is-dragging')
+      try { el.setPointerCapture(pointerID) } catch { /* 部分瀏覽器不支援，不影響拖曳判定 */ }
+    }
+    const target = channelTileAt(event.clientX, event.clientY)
+    if (target === state.dragTargetEl) return
+    clearTarget()
+    if (target && target !== el) {
+      state.dragTargetEl = target
+      target.classList.add('is-drop-target')
+    }
+  })
+
+  el.addEventListener('pointerup', async () => {
+    stopLongPress()
+    if (!dragging) { pointerID = null; return }
+    const targetID = state.dragTargetEl?.dataset?.channelId || null
+    endDrag()
+    if (!targetID || targetID === channel.id) return
+    const targetChannel = state.baseChannels.find(item => item.id === targetID)
+    if (targetChannel) await dropChannel(channel, targetChannel)
+  })
+
+  el.addEventListener('pointercancel', () => {
+    stopLongPress()
+    if (dragging) endDrag()
+    else pointerID = null
+  })
+}
+
+// 拖曳本身就是一次排序，所以順手記下原始順序並開啟排序模式，
+// 讓工具列的「取消」可以把這次拖曳還原回去。
+async function dropChannel(sourceChannel, targetChannel) {
+  const wasActive = state.reorderActive
+  const previousSnapshot = state.reorderSnapshot
+  const previousCategory = state.reorderCategory
+  state.reorderCategory = wasActive ? previousCategory : state.category
+  state.reorderSnapshot = wasActive ? previousSnapshot : [...state.baseChannels.map(item => item.id)]
+
+  const swapped = await swapChannels(sourceChannel.id, targetChannel)
+  if (!swapped) {
+    state.reorderActive = wasActive
+    state.reorderSnapshot = previousSnapshot
+    state.reorderCategory = previousCategory
+    return
+  }
+
+  state.reorderActive = true
+  state.reorderSelectedID = targetChannel.id
+  await loadState()
+  layoutWall()
+  toast('已把「' + sourceChannel.name + '」移到「' + targetChannel.name + '」的位置。按「取消」可還原。', 3200)
+}
+
+// 依目前清單的順序交換兩台頻道並存回；回傳是否真的換了。
+async function swapChannels(firstID, targetChannel) {
+  const ids = [...state.baseChannels.map(item => item.id)]
+  const first = ids.indexOf(firstID)
+  const second = ids.indexOf(targetChannel.id)
+  if (first < 0 || second < 0 || first === second) return false
+  ;[ids[first], ids[second]] = [ids[second], ids[first]]
+  const groupID = favoriteGroupID(state.reorderCategory)
+  if (groupID) await saveFavoriteGroupOrder(groupID, ids)
+  else await saveChannelOrder(ids)
+  return true
+}
+
 async function handleReorderClick(channel) {
   if (!state.reorderSelectedID) {
     state.reorderSelectedID = channel.id
@@ -676,15 +799,7 @@ async function handleReorderClick(channel) {
     layoutWall(); return
   }
 
-  const ids = [...state.baseChannels.map(item => item.id)]
-  const first = ids.indexOf(state.reorderSelectedID)
-  const second = ids.indexOf(channel.id)
-  if (first >= 0 && second >= 0) {
-    ;[ids[first], ids[second]] = [ids[second], ids[first]]
-    const groupID = favoriteGroupID(state.reorderCategory)
-    if (groupID) await saveFavoriteGroupOrder(groupID, ids)
-    else await saveChannelOrder(ids)
-  }
+  await swapChannels(state.reorderSelectedID, channel)
   state.reorderSelectedID = channel.id
   await loadState()
   layoutWall()
@@ -1189,6 +1304,7 @@ function installGlobalActivityHandlers() {
   let touchStartX = 0
   document.addEventListener('touchstart', event => { touchStartX = event.touches[0].clientX }, { passive: true })
   document.addEventListener('touchend', event => {
+    if (justDragged()) return // 拖曳頻道時不要順便翻頁
     const distance = event.changedTouches[0].clientX - touchStartX
     if (Math.abs(distance) > 60) changePage(distance > 0 ? -1 : 1)
   }, { passive: true })
