@@ -51,6 +51,24 @@ python3 scripts/healthcheck.py
 
 檢查紀錄寫在 `/tmp/web-iptv-wall-healthcheck.log`（正常時不會有任何紀錄）。
 
+安裝、還原與停用：
+
+```bash
+bash scripts/restore-local-server.sh    # 安裝（或還原）本機的兩個 LaunchAgent
+```
+
+停用（例如把站台搬到別台機器後）：
+
+```bash
+U=$(id -u)
+launchctl bootout gui/$U/com.neo.web-iptv-wall.healthcheck
+launchctl bootout gui/$U/com.neo.web-iptv-wall
+mv ~/Library/LaunchAgents/com.neo.web-iptv-wall.plist{,.disabled}
+mv ~/Library/LaunchAgents/com.neo.web-iptv-wall.healthcheck.plist{,.disabled}
+```
+
+注意：每台機器的 `data/wall.json` 各自獨立。兩台同時開著的話，播放清單與我的最愛會各寫各的、不會同步，所以同時間只該有一台在跑。
+
 ## 部署
 
 自架站台請直接執行 `python3 server.py`，共用資料會存入站台的 `data/wall.json`（已加入 .gitignore，不會推上 GitHub）。
