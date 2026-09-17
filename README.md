@@ -34,6 +34,23 @@ python3 server.py
 本機瀏覽器開啟 `http://localhost:8080`，網內其他裝置用 `http://<本機IP>:8080`。
 `server.py` 同時提供靜態檔案與共用資料 API（`/api/state`）；播放清單、我的最愛與排序存到 `data/wall.json`，所有 client 共用同一份。
 
+## 常駐與自動重啟（macOS）
+
+macOS 上可用兩個 LaunchAgent 讓站台常駐並自我修復：
+
+- `com.neo.web-iptv-wall`：服務本體，`KeepAlive` 讓它結束後自動重啟。
+- `com.neo.web-iptv-wall.healthcheck`：每 5 分鐘執行 `scripts/healthcheck.py`，依序探測 `/`、`/js/app.js`、`/api/state`；連續失敗就 `launchctl kickstart -k` 重啟服務。
+
+為什麼需要健康檢查：`KeepAlive` 只看「行程還在不在」。如果行程存活期間 Homebrew 升級了 `python@3.14`，舊版 Cellar 目錄會被刪除，行程不會結束、但執行環境已被抽掉，結果 `/api/state` 仍回 200、所有靜態檔卻一律 404。這種半死狀態只有實際發 HTTP 請求才偵測得到。
+
+手動執行檢查：
+
+```bash
+python3 scripts/healthcheck.py
+```
+
+檢查紀錄寫在 `/tmp/web-iptv-wall-healthcheck.log`（正常時不會有任何紀錄）。
+
 ## 部署
 
 自架站台請直接執行 `python3 server.py`，共用資料會存入站台的 `data/wall.json`（已加入 .gitignore，不會推上 GitHub）。
