@@ -76,6 +76,7 @@ const state = {
   dragTargetEl: null,
   dragEndedAt: 0,
   heroPlayer: null,
+  heroSoundBlocked: false,
   resizeObserver: null,
   hideTimer: null,
   contextMenu: null,
@@ -109,6 +110,14 @@ function createPlayer(channel, muted = true) {
   const video = element('video', { playsinline: true, autoplay: true, loop: true, muted, preload: 'auto' })
   const player = { key, channelID: channel.id, url: channel.url, video, hls: null, started: false }
 
+  // 媒體已經可以播、卻仍是暫停狀態時再試一次：涵蓋「一開始來源還沒準備好」與
+  // 「有聲音的自動播放被瀏覽器擋下」兩種情況。
+  video.addEventListener('canplay', () => {
+    if (state.paused || !video.paused) return
+    if (playerPool.get(key)?.video !== video) return
+    requestPlay(player)
+  })
+
   if (window.Hls?.isSupported()) {
     const hls = new window.Hls({
       enableWorker: false,
@@ -118,7 +127,7 @@ function createPlayer(channel, muted = true) {
     })
     hls.loadSource(channel.url)
     hls.attachMedia(video)
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
+    hls.on(window.Hls.Events.MANIFEST_PARSED, () => requestPlay(player))
     hls.on(window.Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return
       if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
@@ -128,7 +137,7 @@ function createPlayer(channel, muted = true) {
     player.hls = hls
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = channel.url
-    video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true })
+    video.addEventListener('loadedmetadata', () => requestPlay(player), { once: true })
   }
 
   playerPool.set(key, player)
@@ -407,6 +416,39 @@ function createMiniChannel(channel, cell, width, height) {
   return mini
 }
 
+// 瀏覽器會擋「有聲音的自動播放」。小頻道是靜音的，所以能自動播；主頻道有聲音，
+// 一旦被擋住畫面就停在原地，看起來像卡住（介面卻仍顯示 LIVE），要手動暫停再播才會動。
+// 被擋時改成先靜音播起來（畫面不卡），等使用者第一次互動再把聲音打開。
+function requestPlay(player) {
+  const video = player.video
+  return video.play().catch(error => {
+    // 來源還沒準備好之類的錯誤先略過，canplay／MANIFEST_PARSED 之後會再試一次。
+    if (!error || error.name !== 'NotAllowedError' || video.muted) return
+    video.muted = true
+    const firstTime = !state.heroSoundBlocked
+    state.heroSoundBlocked = true
+    if (firstTime) toast('瀏覽器擋下了自動播放，已先用靜音播放；點一下畫面即可開啟聲音。', 4200)
+    video.play().catch(() => {})
+  })
+}
+
+// 使用者第一次互動時，把主頻道的聲音打開。
+function installHeroSoundUnlock() {
+  const unlock = () => {
+    if (!state.heroSoundBlocked) return
+    state.heroSoundBlocked = false
+    const player = state.heroPlayer
+    if (!player) return
+    player.video.muted = false
+    player.video.volume = state.heroVolume
+    player.video.play().catch(() => {})
+    toast('已開啟主頻道聲音。')
+  }
+  for (const event of ['pointerdown', 'keydown', 'touchstart']) {
+    document.addEventListener(event, unlock, { passive: true })
+  }
+}
+
 function createHero(channel, geometry) {
   const hero = element('div', {
     className: `hero-channel${state.fullscreen ? ' is-fullscreen' : ''}`,
@@ -421,7 +463,7 @@ function createHero(channel, geometry) {
   player.video.volume = state.heroVolume
   player.video.muted = false
   if (state.paused) player.video.pause()
-  else player.video.play().catch(() => {})
+  else requestPlay(player)
   player.video.className = 'hero-video'
   hero.append(player.video)
   state.heroPlayer = player
@@ -1327,6 +1369,7 @@ async function main() {
   if (!state.modes['all']) state.modes['all'] = localStorage.getItem('oc-mode') || '4x4'
   state.mode = state.modes[state.category] || '4x4'
   installGlobalActivityHandlers()
+  installHeroSoundUnlock()
   await render()
 }
 
