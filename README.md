@@ -3,6 +3,8 @@
 多頻道 IPTV Wall 的 Web 版播放器，對應 macOS 版 [IPTV-Wall-Player](https://github.com/kingwap99/IPTV-Wall-Player)。
 互動規格與視覺設計（圖示、色系）沿用 macOS 版。
 
+<!-- TODO: 補一張播放牆截圖，例如 ![Web IPTV Wall player](assets/screenshot.png) -->
+
 ## 目前功能
 
 - 中央 Hero + 外圈頻道牆
@@ -21,19 +23,36 @@
 - 每份清單各自記住版面（4×4 / 5×5 / 6×6 / 7×7）：切換清單時自動套用該清單的視窗排列
 - 國家篩選與頻道數量
 - iptv-org 探索器：搜尋、國家篩選、頻道加入播放牆
-- M3U 匯入與頻道庫管理
+- M3U 匯入（貼上 .m3u / .m3u8 URL）與頻道庫管理
 - 鍵盤：←／→ 翻頁、F 全螢幕、Space 全部暫停、Esc 返回
 - PWA manifest 與 Service Worker
 
-## 本地執行
+## 環境需求
+
+- **伺服器端**：Python 3（只用標準程式庫，無第三方依賴）。
+- **瀏覽器端**：Chrome／Edge／Safari／Firefox 皆可；HLS 播放透過 jsDelivr 載入的 [hls.js](https://cdn.jsdelivr.net/npm/hls.js/)。完全離線或內網站台請自行把 hls.js 下載到 `js/` 並改 `index.html` 的引用路徑。
+- **HTTPS 提醒**：PWA 安裝與全螢幕 API 在多數瀏覽器要求安全環境（HTTPS 或 localhost）。用 `http://<網內IP>:8080` 直接開時，Chrome 系瀏覽器的 F 全螢幕與「新增到主畫面」可能無法使用；需要時可加反向代理或 Cloudflare Tunnel 補上 HTTPS。
+
+## 快速開始
 
 ```bash
-cd web-iptv-wall-player
+git clone https://github.com/kingwap99/Web-IPTV-Wall-Player.git
+cd Web-IPTV-Wall-Player
 python3 server.py
 ```
 
 本機瀏覽器開啟 `http://localhost:8080`，網內其他裝置用 `http://<本機IP>:8080`。
-`server.py` 同時提供靜態檔案與共用資料 API（`/api/state`）；播放清單、我的最愛與排序存到 `data/wall.json`，所有 client 共用同一份。
+`server.py` 同時提供靜態檔案與共用資料 API（`GET/PUT /api/state`）；播放清單、我的最愛與排序存到 `data/wall.json`，所有 client 共用同一份。
+
+## 伺服器參數與資料檔
+
+```bash
+python3 server.py --host 0.0.0.0 --port 8080   # 預設值
+bash scripts/serve-lan.sh                        # 區域網路模式，自動顯示網內 IP（PORT=9000 可換埠）
+OC_DATA_FILE=/tmp/wall.json python3 server.py  # 資料檔改放別處（OC_DATA_DIR 同）
+```
+
+`data/wall.json` 的結構為 `{ "playlists": [...], "meta": {...} }`：`playlists` 是各份清單（全部／自訂最愛）與其頻道順序，`meta` 存版面等全域狀態。可直接編輯這個檔案後重啟服務，或用 `PUT /api/state` 覆寫。
 
 ## 常駐與自動重啟（macOS）
 
@@ -50,7 +69,7 @@ macOS 上可用兩個 LaunchAgent 讓站台常駐並自我修復：
 python3 scripts/healthcheck.py
 ```
 
-檢查紀錄寫在 `/tmp/web-iptv-wall-healthcheck.log`（正常時不會有任何紀錄）。
+檢查紀錄寫在 `/tmp/web-iptv-wall-healthcheck.log`（正常時不會有任何紀錄）。健康檢查可用環境變數覆寫：`OC_LABEL`、`OC_PORT`、`OC_ATTEMPTS`、`OC_RETRY_DELAY`、`OC_HEALTHCHECK_LOG`。
 
 安裝、還原與停用：
 
@@ -74,8 +93,24 @@ mv ~/Library/LaunchAgents/com.neo.web-iptv-wall.healthcheck.plist{,.disabled}
 
 自架站台請直接執行 `python3 server.py`，共用資料會存入站台的 `data/wall.json`（已加入 .gitignore，不會推上 GitHub）。
 
-也可以部署到 Cloudflare Pages、Vercel、Netlify 等靜態主機；這種模式下共用 API 不存在，每個瀏覽器退回各自本機的 IndexedDB，功能照常可用，只是不會跨裝置共享。
+也可以部署到 Cloudflare Pages、Vercel、Netlify 等靜態主機；這種模式下共用 API 不存在，每個瀏覽器退回各自本機的 IndexedDB，功能照常可用，只是不會跨裝置共享。靜態主機上同樣受 HTTPS 提醒一節的限制較少（本来就是 HTTPS），但 PWA 更新請留意下一節。
+
+## 維護提醒：Service Worker 快取
+
+前端由 Service Worker（`sw.js`）以 cache-first 方式提供，快取版號寫死在檔案開頭的 `CACHE = 'web-iptv-wall-v7'`。**改版後請把版號加一**（例如 `v8`），新版部署後舊 client 才會自動捨棄舊快取；只推靜態檔不改版號，使用者會繼續看到舊版。
+
+## 疑難排解
+
+- **埠被占用**：`Address already in use` 時改用 `python3 server.py --port 9000`（LaunchAgent 部署則改 plist 裡的 `--port` 與健康檢查的 `OC_PORT`）。
+- **頻道黑畫面**：多半是來源端問題（區網外節流、403、CORS 或來源下線）。開「頻道資訊」看 URL，直接用 `curl -I` 或新分頁測試該串流。
+- **改了程式沒生效**：先確認是否被 Service Worker 快取擋住（見上一節），或用戶端強制重新整理。
+- **iptv-org 探索器載入很慢**：它要抓 iptv-org 的 channels／streams／feeds 三份公開索引（合计数 MB），首次載入較久屬正常；結果會快取在本機。
 
 ## 內容來源
 
 本播放器不代管或轉播影音內容。串流來源來自使用者匯入的 M3U，或 iptv-org 提供的公開索引資料；使用者應自行確認來源的使用權限。
+
+## 授權
+
+[MIT](LICENSE)
+
