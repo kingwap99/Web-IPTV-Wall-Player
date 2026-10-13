@@ -77,6 +77,7 @@ const state = {
   dragEndedAt: 0,
   heroPlayer: null,
   heroSoundBlocked: false,
+  hdHero: localStorage.getItem('oc-hd-hero') !== 'off',
   resizeObserver: null,
   hideTimer: null,
   contextMenu: null,
@@ -92,10 +93,19 @@ const state = {
 const playerPool = new Map()
 const MAX_PLAYERS = 24
 
-function playerKey(channel) { return `${channel.id}|${channel.url}` }
+function playerKey(channel, url = channel.url) { return `${channel.id}|${url}` }
 
-function createPlayer(channel, muted = true) {
-  const key = playerKey(channel)
+// 由低解析 URL 推導高解析端點：/live/<name>.m3u8 -> /live/<name>-hd.m3u8。
+// 已是 -hd、或非 /live/ 格式的來源回 null（不升級）。
+function hdURL(url) {
+  if (!url || /-hd\.m3u8$/i.test(url)) return null
+  const m = url.match(/^(.*\/live\/[A-Za-z0-9_-]+?)\.m3u8$/i)
+  return m ? `${m[1]}-hd.m3u8` : null
+}
+
+function createPlayer(channel, muted = true, urlOverride = null) {
+  const url = urlOverride || channel.url
+  const key = playerKey(channel, url)
   const existing = playerPool.get(key)
   if (existing) {
     existing.video.muted = muted
@@ -108,7 +118,7 @@ function createPlayer(channel, muted = true) {
   }
 
   const video = element('video', { playsinline: true, autoplay: true, loop: true, muted, preload: 'auto' })
-  const player = { key, channelID: channel.id, url: channel.url, video, hls: null, started: false }
+  const player = { key, channelID: channel.id, url, video, hls: null, started: false }
 
   // 媒體已經可以播、卻仍是暫停狀態時再試一次：涵蓋「一開始來源還沒準備好」與
   // 「有聲音的自動播放被瀏覽器擋下」兩種情況。
@@ -125,7 +135,7 @@ function createPlayer(channel, muted = true) {
       backBufferLength: 30,
       maxBufferLength: 30
     })
-    hls.loadSource(channel.url)
+    hls.loadSource(url)
     hls.attachMedia(video)
     hls.on(window.Hls.Events.MANIFEST_PARSED, () => requestPlay(player))
     hls.on(window.Hls.Events.ERROR, (_, data) => {
@@ -136,7 +146,7 @@ function createPlayer(channel, muted = true) {
     })
     player.hls = hls
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = channel.url
+    video.src = url
     video.addEventListener('loadedmetadata', () => requestPlay(player), { once: true })
   }
 
@@ -155,6 +165,13 @@ function destroyPlayer(key) {
   } catch { /* player is already gone */ }
   player.video.remove()
   playerPool.delete(key)
+}
+
+function toggleHdHero() {
+  state.hdHero = !state.hdHero
+  localStorage.setItem('oc-hd-hero', state.hdHero ? 'on' : 'off')
+  layoutWall()
+  showControls()
 }
 
 function fadeVolume(video, target, duration) {
@@ -459,7 +476,9 @@ function createHero(channel, geometry) {
       height: `${geometry.height}px`
     }
   })
-  const player = createPlayer(channel, false)
+  // 大視窗用高解析（若可推導且開著）；小窗維持低解析，達到節流。
+  const hd = state.hdHero ? hdURL(channel.url) : null
+  const player = createPlayer(channel, false, hd)
   player.video.volume = state.heroVolume
   player.video.muted = false
   if (state.paused) player.video.pause()
@@ -536,9 +555,15 @@ function layoutWall() {
   const featured = page.find(channel => channel.id === state.featuredID) || state.channels[0]
   if (!featured) return
   state.featuredID = featured.id
+  const oldHeroPlayer = state.heroPlayer
   const geometry = centerGeometry(count, width, height)
   state.hero = createHero(featured, geometry)
   state.surface.append(state.hero)
+  // hero 換了來源（換頻道、或 HD 開關切換）時回收上一條 player，
+  // 否則舊的（可能是 HD）管線會留在池裡繼續抓頻寬。
+  if (oldHeroPlayer && oldHeroPlayer !== state.heroPlayer) {
+    destroyPlayer(oldHeroPlayer.key)
+  }
   renderPageControls()
   renderReorderToolbar()
   updateControlVisibility()
@@ -921,6 +946,7 @@ function showHeroMenu(x, y, channel) {
     addSeparator(menu)
     addMenuItem(menu, state.paused ? '▶ 繼續播放' : '⏸ 全部暫停', toggleAllPlayback)
     addMenuItem(menu, `🔊 正常播放音量 · ${Math.round(state.heroVolume * 100)}%`, openVolumePanel)
+    addMenuItem(menu, state.hdHero ? `🎞 大視窗 HD：開（小窗維持 720p）` : `🎞 大視窗 HD：關（大小窗同解析度）`, toggleHdHero)
     addSeparator(menu)
     if (pageCount() > 1) {
       addMenuItem(menu, '‹ 上一組', () => changePage(-1))
