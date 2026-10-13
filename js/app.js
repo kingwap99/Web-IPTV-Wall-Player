@@ -487,6 +487,12 @@ function createHero(channel, geometry) {
   hero.append(player.video)
   state.heroPlayer = player
 
+  // 這台頻道原本在小窗時建立的低解析 player 會留在池裡：video 已被 detach 但仍在
+  // 背景抓流，既搶頻寬，也讓 gateway 那條管線永遠不會閒置回收。這裡一併收掉。
+  for (const [key, stale] of [...playerPool]) {
+    if (stale.channelID === channel.id && key !== player.key) destroyPlayer(key)
+  }
+
   hero.append(element('div', { className: 'hero-gradient' }))
   hero.append(element('div', { className: 'hero-brand' },
     element('img', { className: 'hero-brand-logo', src: 'assets/icon-192.png', alt: '' }),
