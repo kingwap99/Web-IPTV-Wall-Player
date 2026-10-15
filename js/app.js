@@ -1023,7 +1023,8 @@ function showMiniMenu(x, y, channel) {
       return
     }
     addFavoriteMenuItems(menu, channel)
-    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel))
+    // 大視窗實際播的可能是 -hd 來源，把正在播的 player 一起帶進資訊窗。
+    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel, state.heroPlayer))
     addMenuItem(menu, '↕ 調整頻道位置', () => beginReorder(channel))
     addSeparator(menu)
     addMenuItem(menu, '✕ 從播放牆移除', () => requestDelete(channel), { danger: true })
@@ -1038,7 +1039,7 @@ function showHeroMenu(x, y, channel) {
       return
     }
     addFavoriteMenuItems(menu, channel)
-    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel))
+    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel, playerPool.get(playerKey(channel))))
     addMenuItem(menu, '↕ 調整頻道位置', () => beginReorder(channel))
     addSeparator(menu)
     addMenuItem(menu, state.paused ? '▶ 繼續播放' : '⏸ 全部暫停', toggleAllPlayback)
@@ -1096,14 +1097,38 @@ function closeModal() {
   state.modal = null
 }
 
-function showChannelInfo(channel) {
-  openModal(element('div', {},
-    element('h2', { text: '頻道資訊' }),
+function showChannelInfo(channel, player = null) {
+  // player = 正在播這條頻道的播放實例（大視窗可能是 HD）。
+  // 沒有傳入時以頻道設定的低解析來源為準（小窗）。
+  const playingURL = player ? player.url : channel.url
+  const video = player ? player.video : null
+  const resText = () => {
+    const w = video ? video.videoWidth : 0
+    if (w >= 2560) return '4K（2560×' + video.videoHeight + '）'
+    if (w >= 1920) return '1080p（' + video.videoWidth + '×' + video.videoHeight + '）'
+    if (w >= 1280) return '720p（' + video.videoWidth + '×' + video.videoHeight + '）'
+    if (w > 0) return `${w}×${video.videoHeight}`
+    return '載入中…'
+  }
+  const resRow = element('div', { className: 'form-field' },
+    element('label', { text: '目前播放解析度' }),
+    element('div', { text: resText() }))
+  if (video) {
+    const paint = () => { resRow.lastChild.textContent = resText() }
+    video.addEventListener('resize', paint)
+    const poll = setInterval(() => { if (!resRow.isConnected) clearInterval(poll); else paint() }, 2000)
+  }
+  const fields = [
     element('div', { className: 'form-field' }, element('label', { text: '名稱' }), element('div', { text: `${flagForCountry(channel.country)} ${channel.name}` })),
     element('div', { className: 'form-field' }, element('label', { text: '國家' }), element('div', { text: countryDisplayName(channel.country) })),
-    element('div', { className: 'form-field' }, element('label', { text: '串流網址' }), element('div', { style: { wordBreak: 'break-all', color: '#aaa', fontSize: '12px' }, text: channel.url })),
-    element('div', { className: 'modal-actions' }, element('button', { onclick: closeModal, text: '關閉' }))
-  ))
+    resRow,
+    element('div', { className: 'form-field' }, element('label', { text: playingURL === channel.url ? '串流網址' : '目前播放（高解析）' }), element('div', { style: { wordBreak: 'break-all', color: '#aaa', fontSize: '12px' }, text: playingURL })),
+  ]
+  if (playingURL !== channel.url) {
+    fields.push(element('div', { className: 'form-field' }, element('label', { text: '低解析來源（小窗）' }), element('div', { style: { wordBreak: 'break-all', color: '#aaa', fontSize: '12px' }, text: channel.url })))
+  }
+  fields.push(element('div', { className: 'modal-actions' }, element('button', { onclick: closeModal, text: '關閉' })))
+  openModal(element('div', {}, element('h2', { text: '頻道資訊' }), ...fields))
 }
 
 function openVolumePanel() {
