@@ -92,6 +92,7 @@ button { cursor: pointer; }
 .hero-live.muted { color: #ff9c33; }
 .hero-country { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .hero-name { margin-top: 2px; color: #fff; font-size: 17px; font-weight: 800; line-height: 1.2; }
+.hero-res { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 6px; vertical-align: 2px; font-size: 10px; font-weight: 800; letter-spacing: .5px; color: #eaf3ff; background: rgba(37,99,235,.55); border: 1px solid rgba(147,197,253,.6); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
 .hero-controls { position: absolute; top: 12px; right: 12px; display: flex; gap: 7px; transition: opacity .25s; }
 .hero-controls button { width: 35px; height: 35px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; color: #fff; background: rgba(0,0,0,.62); font-size: 16px; }
 .hero-controls button:hover { background: rgba(255,255,255,.22); }

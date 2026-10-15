@@ -573,7 +573,29 @@ function createHero(channel, geometry) {
   state.heroInfo = element('div', { className: 'hero-info' },
     element('div', { className: `hero-live${state.paused ? ' paused' : ''}`, text: state.paused ? '⏸ 已暫停' : '● LIVE' }),
     element('div', { className: 'hero-country', text: `${flagForCountry(channel.country)} ${countryDisplayName(channel.country)}` }),
-    element('div', { className: 'hero-name', text: channel.name })
+    (() => {
+      // 頻道名稱後面的解析度徽章：讀實際解碼中的影像尺寸，串流切換時即時更新。
+      const nameRow = element('div', { className: 'hero-name' })
+      nameRow.append(document.createTextNode(channel.name))
+      const badge = element('span', { className: 'hero-res' })
+      const label = () => {
+        const w = player.video.videoWidth || 0
+        if (w >= 2560) return '4K'
+        if (w >= 1920) return '1080p'
+        if (w >= 1280) return '720p'
+        if (w > 0) return `${w}p`
+        return '…'
+      }
+      const paint = () => { badge.textContent = label() }
+      paint()
+      player.video.addEventListener('resize', paint)
+      const poll = setInterval(() => {
+        if (!nameRow.isConnected) { clearInterval(poll); return }
+        paint()
+      }, 2000)
+      nameRow.append(badge)
+      return nameRow
+    })()
   )
   hero.append(state.heroInfo)
 
