@@ -103,6 +103,20 @@ function hdURL(url) {
   return m ? `${m[1]}-hd.m3u8` : null
 }
 
+// 滑鼠停在小窗時預先敲一次 HD manifest：gateway 收到請求就會把那條
+// 已被閒置回收的 HD 管線 spawn 回來。使用者真的點成大視窗時，
+// 首段多半已經就緒，省去 3~6 秒的 cold-start。
+const hdPreheatedAt = new Map()
+function preheatHD(url) {
+  if (!state.hdHero) return
+  const hd = hdURL(url)
+  if (!hd) return
+  const last = hdPreheatedAt.get(hd) || 0
+  if (Date.now() - last < 30000) return      // 30 秒內敲過一次就夠（gateway idle 回收是 120 秒）
+  hdPreheatedAt.set(hd, Date.now())
+  fetch(hd, { cache: 'no-store' }).catch(() => {})
+}
+
 function createPlayer(channel, muted = true, urlOverride = null) {
   const url = urlOverride || channel.url
   const key = playerKey(channel, url)
@@ -172,6 +186,40 @@ function toggleHdHero() {
   localStorage.setItem('oc-hd-hero', state.hdHero ? 'on' : 'off')
   layoutWall()
   showControls()
+}
+
+// 交叉淡入：小窗升級大視窗時，讓原本已在播的 720p 先墊著繼續播，
+// HD 那條管線在透明度 0 的狀態下同步載入；等 HD 真的出圖才淡入並收掉 SD。
+// 沒有這段的話，HD 管線要 cold-start（streamlink spawn 約 3~6 秒），
+// 大視窗會先黑住/凍結一段，就是那個「切換停頓」。
+function crossfadeToHD(sdPlayer, hdPlayer) {
+  const sd = sdPlayer.video
+  const hd = hdPlayer.video
+  // 聲音先由 SD 扛住（大視窗切換通常是點擊觸發，SD 直接開聲不會被擋）
+  sd.volume = state.heroVolume
+  if (!state.paused) { sd.muted = false; sd.play().catch(() => {}) }
+  hd.style.opacity = '0'
+  hd.style.transition = 'opacity .5s ease'
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    hd.style.opacity = '1'
+    if (!state.paused) { hd.muted = false; hd.play().catch(() => {}) }
+    sd.muted = true
+    // 等淡入跑完再回收 SD，避免過渡中途抽走畫面閃一下。
+    // 若使用者在這 600ms 內又把該台拖回小窗（video 已被 reuse 掛回 DOM），就不要殺它。
+    setTimeout(() => {
+      if (!sd.isConnected && playerPool.get(sdPlayer.key) === sdPlayer) destroyPlayer(sdPlayer.key)
+    }, 600)
+  }
+  const ready = () => hd.readyState >= 3 && hd.currentTime > 0
+  if (ready()) { finish(); return }
+  hd.addEventListener('playing', () => { if (ready()) finish() }, { once: true })
+  const poll = setInterval(() => { if (ready()) { clearInterval(poll); finish() } }, 500)
+  // 20 秒還未出圖（HD 來源掛掉之類）：強制收尾，讓 SD 繼續頂著畫面，
+  // 否則 SD 已被靜音+暫停，大視窗會整片凍結。
+  setTimeout(() => { clearInterval(poll); finish() }, 20000)
 }
 
 function fadeVolume(video, target, duration) {
@@ -429,6 +477,13 @@ function createMiniChannel(channel, cell, width, height) {
     event.preventDefault()
     showMiniMenu(event.clientX, event.clientY, channel)
   })
+  // 滑鼠在小窗停留一下就先預熱 HD 管線，點成大視窗時就不用等 cold-start
+  let preheatTimer = null
+  mini.addEventListener('pointerenter', () => {
+    if (state.featuredID === channel.id || state.reorderActive) return
+    preheatTimer = setTimeout(() => preheatHD(channel.url), 350)
+  })
+  mini.addEventListener('pointerleave', () => { clearTimeout(preheatTimer) })
   attachDragHandlers(mini, channel, true)
   return mini
 }
@@ -484,13 +539,27 @@ function createHero(channel, geometry) {
   if (state.paused) player.video.pause()
   else requestPlay(player)
   player.video.className = 'hero-video'
-  hero.append(player.video)
+
+  // 若這台頻道剛才是小窗且在播，先讓它的 SD 畫面墊著做交叉淡入；
+  // HD 已預熱（hover 觸發過）或本來就沒有 SD 時，直接上 HD。
+  const sdPlayer = (hd && !state.paused)
+    ? [...playerPool].find(([key, p]) => key !== player.key && p.channelID === channel.id
+        && !p.video.paused && p.video.readyState >= 2)?.[1] || null
+    : null
+  if (sdPlayer) {
+    hero.append(sdPlayer.video)
+    hero.append(player.video)
+    crossfadeToHD(sdPlayer, player)
+  } else {
+    hero.append(player.video)
+  }
   state.heroPlayer = player
 
   // 這台頻道原本在小窗時建立的低解析 player 會留在池裡：video 已被 detach 但仍在
   // 背景抓流，既搶頻寬，也讓 gateway 那條管線永遠不會閒置回收。這裡一併收掉。
+  // （交叉淡入進行中的那條 SD 例外，由 crossfadeToHD 負責收尾。）
   for (const [key, stale] of [...playerPool]) {
-    if (stale.channelID === channel.id && key !== player.key) destroyPlayer(key)
+    if (stale.channelID === channel.id && key !== player.key && stale !== sdPlayer) destroyPlayer(key)
   }
 
   hero.append(element('div', { className: 'hero-gradient' }))
