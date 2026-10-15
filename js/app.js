@@ -1023,8 +1023,8 @@ function showMiniMenu(x, y, channel) {
       return
     }
     addFavoriteMenuItems(menu, channel)
-    // 大視窗實際播的可能是 -hd 來源，把正在播的 player 一起帶進資訊窗。
-    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel, state.heroPlayer))
+    // 小窗播的是低解析來源；用 pool 查它自己的 player 拿實際尺寸。
+    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel, playerPool.get(playerKey(channel))))
     addMenuItem(menu, '↕ 調整頻道位置', () => beginReorder(channel))
     addSeparator(menu)
     addMenuItem(menu, '✕ 從播放牆移除', () => requestDelete(channel), { danger: true })
@@ -1039,7 +1039,8 @@ function showHeroMenu(x, y, channel) {
       return
     }
     addFavoriteMenuItems(menu, channel)
-    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel, playerPool.get(playerKey(channel))))
+    // 大視窗實際播的可能是 -hd 來源，把正在播的 hero player 帶進資訊窗。
+    addMenuItem(menu, 'ℹ 頻道資訊', () => showChannelInfo(channel, state.heroPlayer))
     addMenuItem(menu, '↕ 調整頻道位置', () => beginReorder(channel))
     addSeparator(menu)
     addMenuItem(menu, state.paused ? '▶ 繼續播放' : '⏸ 全部暫停', toggleAllPlayback)
